@@ -658,16 +658,6 @@ static inline HTMLImg *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLImg, element.node);
 }
 
-static void *HTMLImgElement_QI(HTMLDOMNode *iface, REFIID riid)
-{
-    HTMLImg *This = impl_from_HTMLDOMNode(iface);
-
-    if(IsEqualGUID(&IID_IHTMLImgElement, riid))
-        return &This->IHTMLImgElement_iface;
-
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
 static HRESULT HTMLImgElement_get_readystate(HTMLDOMNode *iface, BSTR *p)
 {
     HTMLImg *This = impl_from_HTMLDOMNode(iface);
@@ -675,31 +665,55 @@ static HRESULT HTMLImgElement_get_readystate(HTMLDOMNode *iface, BSTR *p)
     return IHTMLImgElement_get_readyState(&This->IHTMLImgElement_iface, p);
 }
 
-static void HTMLImgElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+static inline HTMLImg *HTMLImg_from_DispatchEx(DispatchEx *iface)
 {
-    HTMLImg *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsimg)
-        note_cc_edge((nsISupports*)This->nsimg, "This->nsimg", cb);
+    return CONTAINING_RECORD(iface, HTMLImg, element.node.event_target.dispex);
 }
 
-static void HTMLImgElement_unlink(HTMLDOMNode *iface)
+static void *HTMLImgElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLImg *This = impl_from_HTMLDOMNode(iface);
+    HTMLImg *This = HTMLImg_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLImgElement, riid))
+        return &This->IHTMLImgElement_iface;
+
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
+}
+
+static void HTMLImgElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLImg *This = HTMLImg_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->nsimg)
+        note_cc_edge((nsISupports*)This->nsimg, "nsimg", cb);
+}
+
+static void HTMLImgElement_unlink(DispatchEx *dispex)
+{
+    HTMLImg *This = HTMLImg_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
     unlink_ref(&This->nsimg);
 }
 
 static const NodeImplVtbl HTMLImgElementImplVtbl = {
     .clsid                 = &CLSID_HTMLImg,
-    .qi                    = HTMLImgElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
     .get_readystate        = HTMLImgElement_get_readystate,
-    .traverse              = HTMLImgElement_traverse,
-    .unlink                = HTMLImgElement_unlink
+};
+
+static const event_target_vtbl_t HTMLImgElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLImgElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLImgElement_traverse,
+        .unlink         = HTMLImgElement_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLImgElement_iface_tids[] = {
@@ -721,7 +735,7 @@ static void HTMLImgElement_init_dispex_info(dispex_data_t *info, compat_mode_t m
 
 static dispex_static_data_t HTMLImgElement_dispex = {
     "HTMLImageElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLImgElement_event_target_vtbl.dispex_vtbl,
     DispHTMLImg_tid,
     HTMLImgElement_iface_tids,
     HTMLImgElement_init_dispex_info

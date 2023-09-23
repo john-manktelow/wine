@@ -812,7 +812,7 @@ static inline ucontext_t *init_handler( void *sigcontext )
 /***********************************************************************
  *           leave_handler
  */
-static inline void leave_handler( const ucontext_t *sigcontext )
+static inline void leave_handler( ucontext_t *sigcontext )
 {
 #ifdef __linux__
     if (fs32_sel && !is_inside_signal_stack( (void *)RSP_sig(sigcontext )) && !is_inside_syscall(sigcontext))
@@ -2522,8 +2522,6 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
  */
 __ASM_GLOBAL_FUNC( signal_start_thread,
                    "subq $56,%rsp\n\t"
-                   __ASM_SEH(".seh_stackalloc 56\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
                    __ASM_CFI(".cfi_adjust_cfa_offset 56\n\t")
                    "movq %rbp,48(%rsp)\n\t"
                    __ASM_CFI(".cfi_rel_offset %rbp,48\n\t")

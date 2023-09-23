@@ -1769,6 +1769,13 @@ static void test_GetAdaptersAddresses(void)
     osize = size;
     ptr = malloc(osize);
     ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_FRIENDLY_NAME, NULL, ptr, &osize);
+    while (ret == ERROR_BUFFER_OVERFLOW)
+    {
+        size = osize * 2;
+        osize = size;
+        ptr = realloc(ptr, osize);
+        ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_FRIENDLY_NAME, NULL, ptr, &osize);
+    }
     ok(!ret, "expected ERROR_SUCCESS got %lu\n", ret);
     ok(osize == size, "expected %ld, got %ld\n", size, osize);
 
@@ -1859,9 +1866,27 @@ static void test_GetAdaptersAddresses(void)
     free(ptr);
 }
 
+static DWORD get_extended_tcp_table( ULONG family, TCP_TABLE_CLASS class, void **table )
+{
+    DWORD ret, size = 0;
+
+    *table = NULL;
+    ret = pGetExtendedTcpTable( NULL, &size, TRUE, family, class, 0 );
+    if (ret != ERROR_INSUFFICIENT_BUFFER) return ret;
+
+    *table = malloc( size );
+    ret = pGetExtendedTcpTable( *table, &size, TRUE, family, class, 0 );
+    while (ret == ERROR_INSUFFICIENT_BUFFER)
+    {
+        *table = realloc( *table, size );
+        ret = pGetExtendedTcpTable( *table, &size, TRUE, family, class, 0 );
+    }
+    return ret;
+}
+
 static void test_GetExtendedTcpTable(void)
 {
-    DWORD ret, size;
+    DWORD ret;
     MIB_TCPTABLE *table;
     MIB_TCPTABLE_OWNER_PID *table_pid;
     MIB_TCPTABLE_OWNER_MODULE *table_module;
@@ -1874,57 +1899,27 @@ static void test_GetExtendedTcpTable(void)
     ret = pGetExtendedTcpTable( NULL, NULL, TRUE, AF_INET, TCP_TABLE_BASIC_ALL, 0 );
     ok( ret == ERROR_INVALID_PARAMETER, "got %lu\n", ret );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_BASIC_ALL, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table = malloc( size );
-    ret = pGetExtendedTcpTable( table, &size, TRUE, AF_INET, TCP_TABLE_BASIC_ALL, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_BASIC_ALL, (void **)&table );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_BASIC_LISTENER, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table = malloc( size );
-    ret = pGetExtendedTcpTable( table, &size, TRUE, AF_INET, TCP_TABLE_BASIC_LISTENER, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_BASIC_LISTENER, (void **)&table );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_pid = malloc( size );
-    ret = pGetExtendedTcpTable( table_pid, &size, TRUE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_OWNER_PID_ALL, (void **)&table_pid );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_pid );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_pid = malloc( size );
-    ret = pGetExtendedTcpTable( table_pid, &size, TRUE, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_OWNER_PID_LISTENER, (void **)&table_pid );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_pid );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_OWNER_MODULE_ALL, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_module = malloc( size );
-    ret = pGetExtendedTcpTable( table_module, &size, TRUE, AF_INET, TCP_TABLE_OWNER_MODULE_ALL, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_OWNER_MODULE_ALL, (void **)&table_module );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_module );
 
-    size = 0;
-    ret = pGetExtendedTcpTable( NULL, &size, TRUE, AF_INET, TCP_TABLE_OWNER_MODULE_LISTENER, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_module = malloc( size );
-    ret = pGetExtendedTcpTable( table_module, &size, TRUE, AF_INET, TCP_TABLE_OWNER_MODULE_LISTENER, 0 );
+    ret = get_extended_tcp_table( AF_INET, TCP_TABLE_OWNER_MODULE_LISTENER, (void **)&table_module );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_module );
 }
@@ -1978,9 +1973,27 @@ static void test_AllocateAndGetTcpExTableFromStack(void)
     ok( ret == ERROR_NOT_SUPPORTED, "got %lu\n", ret );
 }
 
+static DWORD get_extended_udp_table( ULONG family, UDP_TABLE_CLASS class, void **table )
+{
+    DWORD ret, size = 0;
+
+    *table = NULL;
+    ret = pGetExtendedUdpTable( NULL, &size, TRUE, family, class, 0 );
+    if (ret != ERROR_INSUFFICIENT_BUFFER) return ret;
+
+    *table = malloc( size );
+    ret = pGetExtendedUdpTable( *table, &size, TRUE, family, class, 0 );
+    while (ret == ERROR_INSUFFICIENT_BUFFER)
+    {
+        *table = realloc( *table, size );
+        ret = pGetExtendedUdpTable( *table, &size, TRUE, family, class, 0 );
+    }
+    return ret;
+}
+
 static void test_GetExtendedUdpTable(void)
 {
-    DWORD ret, size;
+    DWORD ret;
     MIB_UDPTABLE *table;
     MIB_UDPTABLE_OWNER_PID *table_pid;
     MIB_UDPTABLE_OWNER_MODULE *table_module;
@@ -1993,30 +2006,15 @@ static void test_GetExtendedUdpTable(void)
     ret = pGetExtendedUdpTable( NULL, NULL, TRUE, AF_INET, UDP_TABLE_BASIC, 0 );
     ok( ret == ERROR_INVALID_PARAMETER, "got %lu\n", ret );
 
-    size = 0;
-    ret = pGetExtendedUdpTable( NULL, &size, TRUE, AF_INET, UDP_TABLE_BASIC, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table = malloc( size );
-    ret = pGetExtendedUdpTable( table, &size, TRUE, AF_INET, UDP_TABLE_BASIC, 0 );
+    ret = get_extended_udp_table( AF_INET, UDP_TABLE_BASIC, (void **)&table );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table );
 
-    size = 0;
-    ret = pGetExtendedUdpTable( NULL, &size, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_pid = malloc( size );
-    ret = pGetExtendedUdpTable( table_pid, &size, TRUE, AF_INET, UDP_TABLE_OWNER_PID, 0 );
+    ret = get_extended_udp_table( AF_INET, UDP_TABLE_OWNER_PID, (void **)&table_pid );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_pid );
 
-    size = 0;
-    ret = pGetExtendedUdpTable( NULL, &size, TRUE, AF_INET, UDP_TABLE_OWNER_MODULE, 0 );
-    ok( ret == ERROR_INSUFFICIENT_BUFFER, "got %lu\n", ret );
-
-    table_module = malloc( size );
-    ret = pGetExtendedUdpTable( table_module, &size, TRUE, AF_INET, UDP_TABLE_OWNER_MODULE, 0 );
+    ret = get_extended_udp_table( AF_INET, UDP_TABLE_OWNER_MODULE, (void **)&table_module );
     ok( ret == ERROR_SUCCESS, "got %lu\n", ret );
     free( table_module );
 }

@@ -341,49 +341,54 @@ static const IHTMLOptionElementVtbl HTMLOptionElementVtbl = {
     HTMLOptionElement_get_form
 };
 
-static inline HTMLOptionElement *HTMLOptionElement_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLOptionElement *HTMLOptionElement_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLOptionElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLOptionElement, element.node.event_target.dispex);
 }
 
-static void *HTMLOptionElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLOptionElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLOptionElement *This = HTMLOptionElement_from_HTMLDOMNode(iface);
+    HTMLOptionElement *This = HTMLOptionElement_from_DispatchEx(dispex);
 
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLOptionElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLOptionElement_iface;
     if(IsEqualGUID(&IID_IHTMLOptionElement, riid))
         return &This->IHTMLOptionElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
-static void HTMLOptionElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+static void HTMLOptionElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
-    HTMLOptionElement *This = HTMLOptionElement_from_HTMLDOMNode(iface);
+    HTMLOptionElement *This = HTMLOptionElement_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
 
     if(This->nsoption)
-        note_cc_edge((nsISupports*)This->nsoption, "This->nsoption", cb);
+        note_cc_edge((nsISupports*)This->nsoption, "nsoption", cb);
 }
 
-static void HTMLOptionElement_unlink(HTMLDOMNode *iface)
+static void HTMLOptionElement_unlink(DispatchEx *dispex)
 {
-    HTMLOptionElement *This = HTMLOptionElement_from_HTMLDOMNode(iface);
+    HTMLOptionElement *This = HTMLOptionElement_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
     unlink_ref(&This->nsoption);
 }
 
 static const NodeImplVtbl HTMLOptionElementImplVtbl = {
     .clsid                 = &CLSID_HTMLOptionElement,
-    .qi                    = HTMLOptionElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
-    .traverse              = HTMLOptionElement_traverse,
-    .unlink                = HTMLOptionElement_unlink
+};
+
+static const event_target_vtbl_t HTMLOptionElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLOptionElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLOptionElement_traverse,
+        .unlink         = HTMLOptionElement_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLOptionElement_iface_tids[] = {
@@ -393,7 +398,7 @@ static const tid_t HTMLOptionElement_iface_tids[] = {
 };
 static dispex_static_data_t HTMLOptionElement_dispex = {
     "HTMLOptionElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLOptionElement_event_target_vtbl.dispex_vtbl,
     DispHTMLOptionElement_tid,
     HTMLOptionElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -1299,20 +1304,6 @@ static inline HTMLSelectElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLSelectElement, element.node);
 }
 
-static void *HTMLSelectElement_QI(HTMLDOMNode *iface, REFIID riid)
-{
-    HTMLSelectElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLSelectElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLSelectElement_iface;
-    if(IsEqualGUID(&IID_IHTMLSelectElement, riid))
-        return &This->IHTMLSelectElement_iface;
-
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
 static HRESULT HTMLSelectElementImpl_put_disabled(HTMLDOMNode *iface, VARIANT_BOOL v)
 {
     HTMLSelectElement *This = impl_from_HTMLDOMNode(iface);
@@ -1325,9 +1316,40 @@ static HRESULT HTMLSelectElementImpl_get_disabled(HTMLDOMNode *iface, VARIANT_BO
     return IHTMLSelectElement_get_disabled(&This->IHTMLSelectElement_iface, p);
 }
 
+static inline HTMLSelectElement *impl_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLSelectElement, element.node.event_target.dispex);
+}
+
+static void *HTMLSelectElement_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLSelectElement *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLSelectElement, riid))
+        return &This->IHTMLSelectElement_iface;
+
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
+}
+
+static void HTMLSelectElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLSelectElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->nsselect)
+        note_cc_edge((nsISupports*)This->nsselect, "nsselect", cb);
+}
+
+static void HTMLSelectElement_unlink(DispatchEx *dispex)
+{
+    HTMLSelectElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
+    unlink_ref(&This->nsselect);
+}
+
 #define DISPID_OPTIONCOL_0 MSHTML_DISPID_CUSTOM_MIN
 
-static HRESULT HTMLSelectElement_get_dispid(HTMLDOMNode *iface, BSTR name, DWORD flags, DISPID *dispid)
+static HRESULT HTMLSelectElement_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     const WCHAR *ptr;
     DWORD idx = 0;
@@ -1346,7 +1368,7 @@ static HRESULT HTMLSelectElement_get_dispid(HTMLDOMNode *iface, BSTR name, DWORD
     return S_OK;
 }
 
-static HRESULT HTMLSelectElement_dispex_get_name(HTMLDOMNode *iface, DISPID id, BSTR *name)
+static HRESULT HTMLSelectElement_dispex_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
 {
     DWORD idx = id - DISPID_OPTIONCOL_0;
     WCHAR buf[11];
@@ -1359,10 +1381,10 @@ static HRESULT HTMLSelectElement_dispex_get_name(HTMLDOMNode *iface, DISPID id, 
     return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
 }
 
-static HRESULT HTMLSelectElement_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
+static HRESULT HTMLSelectElement_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
         VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
-    HTMLSelectElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLSelectElement *This = impl_from_DispatchEx(dispex);
 
     TRACE("(%p)->(%lx %lx %x %p %p %p %p)\n", This, id, lcid, flags, params, res, ei, caller);
 
@@ -1392,35 +1414,28 @@ static HRESULT HTMLSelectElement_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid
     return S_OK;
 }
 
-static void HTMLSelectElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
-{
-    HTMLSelectElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsselect)
-        note_cc_edge((nsISupports*)This->nsselect, "This->nsselect", cb);
-}
-
-static void HTMLSelectElement_unlink(HTMLDOMNode *iface)
-{
-    HTMLSelectElement *This = impl_from_HTMLDOMNode(iface);
-    unlink_ref(&This->nsselect);
-}
-
 static const NodeImplVtbl HTMLSelectElementImplVtbl = {
     .clsid                 = &CLSID_HTMLSelectElement,
-    .qi                    = HTMLSelectElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
     .put_disabled          = HTMLSelectElementImpl_put_disabled,
     .get_disabled          = HTMLSelectElementImpl_get_disabled,
-    .get_dispid            = HTMLSelectElement_get_dispid,
-    .get_name              = HTMLSelectElement_dispex_get_name,
-    .invoke                = HTMLSelectElement_invoke,
-    .traverse              = HTMLSelectElement_traverse,
-    .unlink                = HTMLSelectElement_unlink
+};
+
+static const event_target_vtbl_t HTMLSelectElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLSelectElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLSelectElement_traverse,
+        .unlink         = HTMLSelectElement_unlink,
+        .get_dispid     = HTMLSelectElement_get_dispid,
+        .get_name       = HTMLSelectElement_dispex_get_name,
+        .invoke         = HTMLSelectElement_invoke
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLSelectElement_tids[] = {
@@ -1431,7 +1446,7 @@ static const tid_t HTMLSelectElement_tids[] = {
 
 static dispex_static_data_t HTMLSelectElement_dispex = {
     "HTMLSelectElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLSelectElement_event_target_vtbl.dispex_vtbl,
     DispHTMLSelectElement_tid,
     HTMLSelectElement_tids,
     HTMLElement_init_dispex_info

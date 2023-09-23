@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <errno.h>
 #include <stdarg.h>
 
 #include "msvcp90.h"
@@ -637,7 +638,7 @@ DEFINE_CXX_DATA1(runtime_error, &exception_cxx_type_info, MSVCP_runtime_error_dt
 typedef struct {
     runtime_error base;
 #if _MSVCP_VER > 90
-    int err;
+    error_code code;
 #endif
 } system_error;
 typedef system_error _System_error;
@@ -648,8 +649,8 @@ static failure* MSVCP_failure_ctor( failure *this, exception_name name )
     TRACE("%p %s\n", this, EXCEPTION_STR(name));
     MSVCP_runtime_error_ctor(&this->base, name);
 #if _MSVCP_VER > 90
-    /* FIXME: set err correctly */
-    this->err = 0;
+    this->code.code = 1;
+    this->code.category = std_iostream_category();
 #endif
     this->base.e.vtable = &failure_vtable;
     return this;
@@ -662,7 +663,7 @@ failure* __thiscall failure_copy_ctor(
     TRACE("%p %p\n", this, rhs);
     runtime_error_copy_ctor(&this->base, &rhs->base);
 #if _MSVCP_VER > 90
-    this->err = rhs->err;
+    this->code = rhs->code;
 #endif
     this->base.e.vtable = &failure_vtable;
     return this;
@@ -722,7 +723,9 @@ DEFINE_RTTI_DATA4(failure, 0, &system_error_rtti_base_descriptor,
         &_System_error_rtti_base_descriptor, &runtime_error_rtti_base_descriptor,
         &exception_rtti_base_descriptor, ".?AVfailure@ios_base@std@@")
 DEFINE_CXX_TYPE_INFO(_System_error)
-DEFINE_CXX_TYPE_INFO(system_error);
+DEFINE_CXX_DATA3(system_error, &_System_error_cxx_type_info,
+        &runtime_error_cxx_type_info, &exception_cxx_type_info,
+        MSVCP_runtime_error_dtor)
 DEFINE_CXX_DATA4(failure, &system_error_cxx_type_info,
         &_System_error_cxx_type_info, &runtime_error_cxx_type_info,
         &exception_cxx_type_info, MSVCP_runtime_error_dtor)
@@ -732,7 +735,12 @@ DEFINE_RTTI_DATA2(system_error, 0, &runtime_error_rtti_base_descriptor,
 DEFINE_RTTI_DATA3(failure, 0, &system_error_rtti_base_descriptor,
         &runtime_error_rtti_base_descriptor, &exception_rtti_base_descriptor,
         ".?AVfailure@ios_base@std@@")
+#if _MSVCP_VER == 100
 DEFINE_CXX_TYPE_INFO(system_error);
+#else
+DEFINE_CXX_DATA2(system_error, &runtime_error_cxx_type_info,
+        &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+#endif
 DEFINE_CXX_DATA3(failure, &system_error_cxx_type_info, &runtime_error_cxx_type_info,
         &exception_cxx_type_info, MSVCP_runtime_error_dtor)
 #else
@@ -950,12 +958,6 @@ bool __cdecl MSVCP__uncaught_exception(void)
 #if _MSVCP_VER >= 110
 typedef struct
 {
-    int code;
-    void *category;
-} error_code;
-
-typedef struct
-{
     logic_error base;
     error_code code;
 } future_error;
@@ -1038,6 +1040,44 @@ static void exception_ptr_rethrow(const exception_ptr *ep)
 void __cdecl _Rethrow_future_exception(const exception_ptr ep)
 {
     exception_ptr_rethrow(&ep);
+}
+
+/* ?_Throw_C_error@std@@YAXH@Z */
+void __cdecl _Throw_C_error(int code)
+{
+    system_error se;
+    const char *msg;
+    errno_t err;
+
+    TRACE("(%d)\n", code);
+
+    switch(code)
+    {
+    case 1:
+    case 2:
+        err = EAGAIN;
+        break;
+    case 3:
+        err = EBUSY;
+        break;
+    case 4:
+        err = EINVAL;
+        break;
+    default:
+#if _MSVCP_VER >= 140
+        abort();
+#else
+        return;
+#endif
+    }
+
+    msg = strerror(err);
+    MSVCP_runtime_error_ctor(&se.base, &msg);
+    se.code.code = err;
+    se.code.category = std_generic_category();
+    se.base.e.vtable = &system_error_vtable;
+
+    _CxxThrowException(&se, &system_error_cxx_type);
 }
 #endif
 
@@ -1515,8 +1555,10 @@ void init_exception(void *base)
 #if _MSVCP_VER > 110
     init__System_error_cxx_type_info(base);
 #endif
-#if _MSVCP_VER > 90
+#if _MSVCP_VER == 100
     init_system_error_cxx_type_info(base);
+#elif _MSVCP_VER > 100
+    init_system_error_cxx(base);
 #endif
     init_failure_cxx(base);
     init_range_error_cxx(base);

@@ -17847,14 +17847,13 @@ static void test_PostMessage(void)
 }
 
 static WPARAM g_broadcast_wparam;
+static UINT g_broadcast_msg;
 static LRESULT WINAPI broadcast_test_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     WNDPROC oldproc = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
 
-    if (wParam == 0xbaadbeef)
+    if (message == g_broadcast_msg)
         g_broadcast_wparam = wParam;
-    else
-        g_broadcast_wparam = 0;
 
     return CallWindowProcA(oldproc, hwnd, message, wParam, lParam);
 }
@@ -17864,7 +17863,8 @@ static LRESULT WINAPI broadcast_test_sub_proc(HWND hwnd, UINT message, WPARAM wP
 {
     int sub_index = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
 
-    g_broadcast_sub_wparam[sub_index] = (wParam == 0xbaadbeef) ? wParam : 0;
+    if (message == g_broadcast_msg)
+        g_broadcast_sub_wparam[sub_index] = wParam;
 
     return CallWindowProcA(g_oldproc_sub[sub_index], hwnd, message, wParam, lParam);
 }
@@ -17966,6 +17966,7 @@ static void test_broadcast(void)
         g_broadcast_wparam = 0xdead;
         for (j = 0; j < ARRAY_SIZE(bcast_expect); j++)
             g_broadcast_sub_wparam[j] = 0xdead;
+        g_broadcast_msg = messages[i];
         ret = SendMessageTimeoutA(HWND_BROADCAST, messages[i], 0xbaadbeef, 0, SMTO_NORMAL, 2000, NULL);
         if (!ret && GetLastError() == ERROR_TIMEOUT)
             win_skip("broadcasting test %d, timeout\n", i);
@@ -19559,6 +19560,13 @@ static const struct message send_message_3[] = {
     { WM_USER+1, sent|wparam|lparam, 0, 0 },
     { 0 }
 };
+static const struct message send_message_5[] = {
+    { WM_WINDOWPOSCHANGING, sent|wparam|optional, SWP_NOACTIVATE|SWP_NOZORDER }, /* win7+ dual monitor */
+    { WM_GETMINMAXINFO, sent|defwinproc|optional }, /* win7+ dual monitor */
+    { WM_WINDOWPOSCHANGING, sent|wparam|optional, SWP_NOACTIVATE|SWP_NOZORDER }, /* win7+ dual monitor */
+    { WM_GETMINMAXINFO, sent|defwinproc|optional }, /* win7+ dual monitor */
+    { 0 }
+};
 
 static DWORD WINAPI SendMessage_thread_1(void *param)
 {
@@ -19688,14 +19696,11 @@ static void test_SendMessage_other_thread(int thread_n)
     /* intentionally yield */
     MsgWaitForMultipleObjects(0, NULL, FALSE, 100, qs_all_input);
 
-    ret = GetQueueStatus(QS_SENDMESSAGE|QS_POSTMESSAGE);
-    /* FIXME: remove once Wine is fixed */
-    todo_wine_if (thread_n == 2)
-    ok(ret == 0, "wrong status %08lx\n", ret);
-
     if (winetest_debug > 1) trace("main: call PeekMessage\n");
-    ok(!PeekMessageA(&msg, 0, 0, 0, PM_REMOVE), "PeekMessage should fail\n");
-    ok_sequence(WmEmptySeq, "SendMessage from other thread 5", thread_n == 2);
+    while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) {
+        ok(ignore_message(msg.message), "got unexpected message %04x from PeekMessageA\n", msg.message);
+    }
+    ok_sequence(send_message_5, "SendMessage from other thread 5", thread_n == 2);
 
     ret = GetQueueStatus(QS_SENDMESSAGE|QS_POSTMESSAGE);
     ok(ret == 0, "wrong status %08lx\n", ret);

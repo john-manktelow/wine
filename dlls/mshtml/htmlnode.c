@@ -1407,15 +1407,24 @@ void *HTMLDOMNode_query_interface(DispatchEx *dispex, REFIID riid)
 {
     HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
 
-    return This->vtbl->qi(This, riid);
+    if(IsEqualGUID(&IID_IUnknown, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IDispatch, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode2, riid))
+        return &This->IHTMLDOMNode2_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode3, riid))
+        return &This->IHTMLDOMNode3_iface;
+
+    return EventTarget_query_interface(&This->event_target, riid);
 }
 
 void HTMLDOMNode_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
 
-    if(This->vtbl->traverse)
-        This->vtbl->traverse(This, cb);
     if(This->nsnode)
         note_cc_edge((nsISupports*)This->nsnode, "nsnode", cb);
     if(This->doc && &This->doc->node != This)
@@ -1425,9 +1434,6 @@ void HTMLDOMNode_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback
 void HTMLDOMNode_unlink(DispatchEx *dispex)
 {
     HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
-
-    if(This->vtbl->unlink)
-        This->vtbl->unlink(This);
 
     release_event_target(&This->event_target);
     unlink_ref(&This->nsnode);
@@ -1443,25 +1449,7 @@ void HTMLDOMNode_unlink(DispatchEx *dispex)
 void HTMLDOMNode_destructor(DispatchEx *dispex)
 {
     HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
-    if(This->vtbl->destructor)
-        This->vtbl->destructor(This);
     free(This);
-}
-
-void *HTMLDOMNode_QI(HTMLDOMNode *This, REFIID riid)
-{
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLDOMNode_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLDOMNode_iface;
-    if(IsEqualGUID(&IID_IHTMLDOMNode, riid))
-        return &This->IHTMLDOMNode_iface;
-    if(IsEqualGUID(&IID_IHTMLDOMNode2, riid))
-        return &This->IHTMLDOMNode2_iface;
-    if(IsEqualGUID(&IID_IHTMLDOMNode3, riid))
-        return &This->IHTMLDOMNode3_iface;
-
-    return EventTarget_query_interface(&This->event_target, riid);
 }
 
 static HRESULT HTMLDOMNode_clone(HTMLDOMNode *This, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -1480,7 +1468,6 @@ void HTMLDOMNode_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 static const cpc_entry_t HTMLDOMNode_cpc[] = {{NULL}};
 
 static const NodeImplVtbl HTMLDOMNodeImplVtbl = {
-    .qi                    = HTMLDOMNode_QI,
     .cpc_entries           = HTMLDOMNode_cpc,
     .clone                 = HTMLDOMNode_clone
 };

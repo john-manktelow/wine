@@ -19,7 +19,6 @@
  */
 
 #include "dmusic_private.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmusic);
 
@@ -33,6 +32,35 @@ struct articulation
 };
 
 C_ASSERT(sizeof(struct articulation) == offsetof(struct articulation, connections[0]));
+
+struct region
+{
+    struct list entry;
+    struct list articulations;
+    RGNHEADER header;
+    WAVELINK wave_link;
+    WSMPL wave_sample;
+    WLOOP wave_loop;
+    BOOL loop_present;
+};
+
+struct instrument
+{
+    IDirectMusicInstrument IDirectMusicInstrument_iface;
+    IDirectMusicDownloadedInstrument IDirectMusicDownloadedInstrument_iface;
+    LONG ref;
+
+    INSTHEADER header;
+    IDirectMusicDownload *download;
+    struct collection *collection;
+    struct list articulations;
+    struct list regions;
+};
+
+static inline struct instrument *impl_from_IDirectMusicInstrument(IDirectMusicInstrument *iface)
+{
+    return CONTAINING_RECORD(iface, struct instrument, IDirectMusicInstrument_iface);
+}
 
 static HRESULT WINAPI instrument_QueryInterface(LPDIRECTMUSICINSTRUMENT iface, REFIID riid, LPVOID *ret_iface)
 {
@@ -94,10 +122,18 @@ static ULONG WINAPI instrument_Release(LPDIRECTMUSICINSTRUMENT iface)
 
         LIST_FOR_EACH_ENTRY_SAFE(region, next_region, &This->regions, struct region, entry)
         {
+            LIST_FOR_EACH_ENTRY_SAFE(articulation, next_articulation, &region->articulations,
+                    struct articulation, entry)
+            {
+                list_remove(&articulation->entry);
+                free(articulation);
+            }
+
             list_remove(&region->entry);
             free(region);
         }
 
+        collection_internal_release(This->collection);
         free(This);
     }
 
@@ -135,14 +171,56 @@ static const IDirectMusicInstrumentVtbl instrument_vtbl =
     instrument_SetPatch,
 };
 
-static HRESULT instrument_create(IDirectMusicInstrument **ret_iface)
+static inline struct instrument* impl_from_IDirectMusicDownloadedInstrument(IDirectMusicDownloadedInstrument *iface)
+{
+    return CONTAINING_RECORD(iface, struct instrument, IDirectMusicDownloadedInstrument_iface);
+}
+
+static HRESULT WINAPI downloaded_instrument_QueryInterface(IDirectMusicDownloadedInstrument *iface, REFIID riid, VOID **ret_iface)
+{
+    TRACE("(%p, %s, %p)\n", iface, debugstr_dmguid(riid), ret_iface);
+
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDirectMusicDownloadedInstrument))
+    {
+        IDirectMusicDownloadedInstrument_AddRef(iface);
+        *ret_iface = iface;
+        return S_OK;
+    }
+
+    WARN("(%p, %s, %p): not found\n", iface, debugstr_dmguid(riid), ret_iface);
+
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI downloaded_instrument_AddRef(IDirectMusicDownloadedInstrument *iface)
+{
+    struct instrument *This = impl_from_IDirectMusicDownloadedInstrument(iface);
+    return IDirectMusicInstrument_AddRef(&This->IDirectMusicInstrument_iface);
+}
+
+static ULONG WINAPI downloaded_instrument_Release(IDirectMusicDownloadedInstrument *iface)
+{
+    struct instrument *This = impl_from_IDirectMusicDownloadedInstrument(iface);
+    return IDirectMusicInstrument_Release(&This->IDirectMusicInstrument_iface);
+}
+
+static const IDirectMusicDownloadedInstrumentVtbl downloaded_instrument_vtbl =
+{
+    downloaded_instrument_QueryInterface,
+    downloaded_instrument_AddRef,
+    downloaded_instrument_Release,
+};
+
+static HRESULT instrument_create(struct collection *collection, IDirectMusicInstrument **ret_iface)
 {
     struct instrument *instrument;
 
     *ret_iface = NULL;
     if (!(instrument = calloc(1, sizeof(*instrument)))) return E_OUTOFMEMORY;
     instrument->IDirectMusicInstrument_iface.lpVtbl = &instrument_vtbl;
+    instrument->IDirectMusicDownloadedInstrument_iface.lpVtbl = &downloaded_instrument_vtbl;
     instrument->ref = 1;
+    collection_internal_addref((instrument->collection = collection));
     list_init(&instrument->articulations);
     list_init(&instrument->regions);
 
@@ -151,7 +229,8 @@ static HRESULT instrument_create(IDirectMusicInstrument **ret_iface)
     return S_OK;
 }
 
-static HRESULT parse_art1_chunk(struct instrument *This, IStream *stream, struct chunk_entry *chunk)
+static HRESULT parse_art1_chunk(struct instrument *This, IStream *stream, struct chunk_entry *chunk,
+        struct list *articulations)
 {
     struct articulation *articulation;
     CONNECTIONLIST list;
@@ -169,12 +248,13 @@ static HRESULT parse_art1_chunk(struct instrument *This, IStream *stream, struct
 
     size = sizeof(CONNECTION) * list.cConnections;
     if (FAILED(hr = stream_read(stream, articulation->connections, size))) free(articulation);
-    else list_add_tail(&This->articulations, &articulation->entry);
+    else list_add_tail(articulations, &articulation->entry);
 
     return hr;
 }
 
-static HRESULT parse_lart_list(struct instrument *This, IStream *stream, struct chunk_entry *parent)
+static HRESULT parse_lart_list(struct instrument *This, IStream *stream, struct chunk_entry *parent,
+        struct list *articulations)
 {
     struct chunk_entry chunk = {.parent = parent};
     HRESULT hr;
@@ -184,7 +264,7 @@ static HRESULT parse_lart_list(struct instrument *This, IStream *stream, struct 
         switch (MAKE_IDTYPE(chunk.id, chunk.type))
         {
         case FOURCC_ART1:
-            hr = parse_art1_chunk(This, stream, &chunk);
+            hr = parse_art1_chunk(This, stream, &chunk, articulations);
             break;
 
         default:
@@ -205,6 +285,7 @@ static HRESULT parse_rgn_chunk(struct instrument *This, IStream *stream, struct 
     HRESULT hr;
 
     if (!(region = malloc(sizeof(*region)))) return E_OUTOFMEMORY;
+    list_init(&region->articulations);
 
     while ((hr = stream_next_chunk(stream, &chunk)) == S_OK)
     {
@@ -227,6 +308,10 @@ static HRESULT parse_rgn_chunk(struct instrument *This, IStream *stream, struct 
 
         case FOURCC_WLNK:
             hr = stream_chunk_get_data(stream, &chunk, &region->wave_link, sizeof(region->wave_link));
+            break;
+
+        case MAKE_IDTYPE(FOURCC_LIST, FOURCC_LART):
+            hr = parse_lart_list(This, stream, &chunk, &region->articulations);
             break;
 
         default:
@@ -267,10 +352,15 @@ static HRESULT parse_lrgn_list(struct instrument *This, IStream *stream, struct 
     return hr;
 }
 
-static HRESULT parse_ins_chunk(struct instrument *This, IStream *stream, struct chunk_entry *parent)
+static HRESULT parse_ins_chunk(struct instrument *This, IStream *stream, struct chunk_entry *parent,
+        DMUS_OBJECTDESC *desc)
 {
     struct chunk_entry chunk = {.parent = parent};
     HRESULT hr;
+
+    if (FAILED(hr = dmobj_parsedescriptor(stream, parent, desc, DMUS_OBJ_NAME_INFO|DMUS_OBJ_GUID_DLID))
+            || FAILED(hr = stream_reset_chunk_data(stream, parent)))
+        return hr;
 
     while ((hr = stream_next_chunk(stream, &chunk)) == S_OK)
     {
@@ -281,7 +371,8 @@ static HRESULT parse_ins_chunk(struct instrument *This, IStream *stream, struct 
             break;
 
         case FOURCC_DLID:
-            hr = stream_chunk_get_data(stream, &chunk, &This->id, sizeof(This->id));
+        case MAKE_IDTYPE(FOURCC_LIST, DMUS_FOURCC_INFO_LIST):
+            /* already parsed by dmobj_parsedescriptor */
             break;
 
         case MAKE_IDTYPE(FOURCC_LIST, FOURCC_LRGN):
@@ -289,7 +380,7 @@ static HRESULT parse_ins_chunk(struct instrument *This, IStream *stream, struct 
             break;
 
         case MAKE_IDTYPE(FOURCC_LIST, FOURCC_LART):
-            hr = parse_lart_list(This, stream, &chunk);
+            hr = parse_lart_list(This, stream, &chunk, &This->articulations);
             break;
 
         default:
@@ -303,54 +394,255 @@ static HRESULT parse_ins_chunk(struct instrument *This, IStream *stream, struct 
     return hr;
 }
 
-HRESULT instrument_create_from_stream(IStream *stream, IDirectMusicInstrument **ret_iface)
+HRESULT instrument_create_from_chunk(IStream *stream, struct chunk_entry *parent,
+        struct collection *collection, DMUS_OBJECTDESC *desc, IDirectMusicInstrument **ret_iface)
 {
-    struct chunk_entry chunk = {0};
     IDirectMusicInstrument *iface;
     struct instrument *This;
     HRESULT hr;
 
-    TRACE("(%p, %p)\n", stream, ret_iface);
+    TRACE("(%p, %p, %p, %p, %p)\n", stream, parent, collection, desc, ret_iface);
 
-    if (FAILED(hr = instrument_create(&iface))) return hr;
+    if (FAILED(hr = instrument_create(collection, &iface))) return hr;
     This = impl_from_IDirectMusicInstrument(iface);
 
-    if ((hr = stream_next_chunk(stream, &chunk)) == S_OK)
+    if (FAILED(hr = parse_ins_chunk(This, stream, parent, desc)))
     {
-        switch (MAKE_IDTYPE(chunk.id, chunk.type))
-        {
-        case MAKE_IDTYPE(FOURCC_LIST, FOURCC_INS):
-            hr = parse_ins_chunk(This, stream, &chunk);
-            break;
-
-        default:
-            WARN("Invalid instrument chunk %s %s\n", debugstr_fourcc(chunk.id), debugstr_fourcc(chunk.type));
-            hr = E_INVALIDARG;
-            break;
-        }
+        IDirectMusicInstrument_Release(iface);
+        return DMUS_E_UNSUPPORTED_STREAM;
     }
-
-    if (FAILED(hr)) goto error;
 
     if (TRACE_ON(dmusic))
     {
-        TRACE("Created DirectMusicInstrument (%p) ***\n", This);
-        if (!IsEqualGUID(&This->id, &GUID_NULL))
-            TRACE(" - GUID = %s\n", debugstr_dmguid(&This->id));
-        TRACE(" - Instrument header:\n");
-        TRACE("    - cRegions: %ld\n", This->header.cRegions);
-        TRACE("    - Locale:\n");
-        TRACE("       - ulBank: %ld\n", This->header.Locale.ulBank);
-        TRACE("       - ulInstrument: %ld\n", This->header.Locale.ulInstrument);
-        TRACE("       => dwPatch: %ld\n", MIDILOCALE2Patch(&This->header.Locale));
+        struct region *region;
+        UINT i;
+
+        TRACE("Created DirectMusicInstrument %p\n", This);
+        TRACE(" - header:\n");
+        TRACE("    - regions: %ld\n", This->header.cRegions);
+        TRACE("    - locale: {bank: %#lx, instrument: %#lx} (patch %#lx)\n",
+                This->header.Locale.ulBank, This->header.Locale.ulInstrument,
+                MIDILOCALE2Patch(&This->header.Locale));
+        if (desc->dwValidData & DMUS_OBJ_OBJECT) TRACE(" - guid: %s\n", debugstr_dmguid(&desc->guidObject));
+        if (desc->dwValidData & DMUS_OBJ_NAME) TRACE(" - name: %s\n", debugstr_w(desc->wszName));
+
+        TRACE(" - regions:\n");
+        LIST_FOR_EACH_ENTRY(region, &This->regions, struct region, entry)
+        {
+            TRACE("   - region:\n");
+            TRACE("     - header: {key: %u - %u, vel: %u - %u, options: %#x, group: %#x}\n",
+                    region->header.RangeKey.usLow, region->header.RangeKey.usHigh,
+                    region->header.RangeVelocity.usLow, region->header.RangeVelocity.usHigh,
+                    region->header.fusOptions, region->header.usKeyGroup);
+            TRACE("     - wave_link: {options: %#x, group: %u, channel: %lu, index: %lu}\n",
+                    region->wave_link.fusOptions, region->wave_link.usPhaseGroup,
+                    region->wave_link.ulChannel, region->wave_link.ulTableIndex);
+            TRACE("     - wave_sample: {size: %lu, unity_note: %u, fine_tune: %d, attenuation: %ld, options: %#lx, loops: %lu}\n",
+                    region->wave_sample.cbSize, region->wave_sample.usUnityNote,
+                    region->wave_sample.sFineTune, region->wave_sample.lAttenuation,
+                    region->wave_sample.fulOptions, region->wave_sample.cSampleLoops);
+            for (i = 0; i < region->wave_sample.cSampleLoops; i++)
+                TRACE("     - wave_loop[%u]: {size: %lu, type: %lu, start: %lu, length: %lu}\n", i,
+                        region->wave_loop.cbSize, region->wave_loop.ulType,
+                        region->wave_loop.ulStart, region->wave_loop.ulLength);
+        }
     }
 
     *ret_iface = iface;
     return S_OK;
+}
 
-error:
-    IDirectMusicInstrument_Release(iface);
+static void write_articulation_download(struct list *articulations, ULONG *offsets,
+        BYTE **ptr, UINT index, DWORD *first, UINT *end)
+{
+    DMUS_ARTICULATION2 *dmus_articulation2 = NULL;
+    struct articulation *articulation;
+    CONNECTIONLIST *list;
+    UINT size;
 
-    stream_skip_chunk(stream, &chunk);
-    return DMUS_E_UNSUPPORTED_STREAM;
+    LIST_FOR_EACH_ENTRY(articulation, articulations, struct articulation, entry)
+    {
+        if (dmus_articulation2) dmus_articulation2->ulNextArtIdx = index;
+        else *first = index;
+
+        offsets[index++] = sizeof(DMUS_DOWNLOADINFO) + *ptr - (BYTE *)offsets;
+        dmus_articulation2 = (DMUS_ARTICULATION2 *)*ptr;
+        (*ptr) += sizeof(DMUS_ARTICULATION2);
+
+        dmus_articulation2->ulArtIdx = index;
+        dmus_articulation2->ulFirstExtCkIdx = 0;
+        dmus_articulation2->ulNextArtIdx = 0;
+
+        size = articulation->list.cConnections * sizeof(CONNECTION);
+        offsets[index++] = sizeof(DMUS_DOWNLOADINFO) + *ptr - (BYTE *)offsets;
+        list = (CONNECTIONLIST *)*ptr;
+        (*ptr) += sizeof(CONNECTIONLIST) + size;
+
+        *list = articulation->list;
+        memcpy(list + 1, articulation->connections, size);
+    }
+
+    *end = index;
+}
+
+struct download_buffer
+{
+    DMUS_DOWNLOADINFO info;
+    ULONG offsets[];
+};
+
+C_ASSERT(sizeof(struct download_buffer) == offsetof(struct download_buffer, offsets[0]));
+
+HRESULT instrument_download_to_port(IDirectMusicInstrument *iface, IDirectMusicPortDownload *port,
+        IDirectMusicDownloadedInstrument **downloaded)
+{
+    struct instrument *This = impl_from_IDirectMusicInstrument(iface);
+    struct articulation *articulation;
+    struct download_buffer *buffer;
+    IDirectMusicDownload *download;
+    DWORD size, offset_count;
+    struct region *region;
+    IUnknown *wave;
+    HRESULT hr;
+
+    if (This->download) goto done;
+
+    size = sizeof(DMUS_DOWNLOADINFO);
+    size += sizeof(ULONG) + sizeof(DMUS_INSTRUMENT);
+    offset_count = 1;
+
+    LIST_FOR_EACH_ENTRY(articulation, &This->articulations, struct articulation, entry)
+    {
+        size += sizeof(ULONG) + sizeof(DMUS_ARTICULATION2);
+        size += sizeof(ULONG) + sizeof(CONNECTIONLIST);
+        size += articulation->list.cConnections * sizeof(CONNECTION);
+        offset_count += 2;
+    }
+
+    LIST_FOR_EACH_ENTRY(region, &This->regions, struct region, entry)
+    {
+        size += sizeof(ULONG) + sizeof(DMUS_REGION);
+        offset_count++;
+
+        LIST_FOR_EACH_ENTRY(articulation, &region->articulations, struct articulation, entry)
+        {
+            size += sizeof(ULONG) + sizeof(DMUS_ARTICULATION2);
+            size += sizeof(ULONG) + sizeof(CONNECTIONLIST);
+            size += articulation->list.cConnections * sizeof(CONNECTION);
+            offset_count += 2;
+        }
+    }
+
+    if (FAILED(hr = IDirectMusicPortDownload_AllocateBuffer(port, size, &download))) return hr;
+
+    if (SUCCEEDED(hr = IDirectMusicDownload_GetBuffer(download, (void **)&buffer, &size))
+            && SUCCEEDED(hr = IDirectMusicPortDownload_GetDLId(port, &buffer->info.dwDLId, 1)))
+    {
+        BYTE *ptr = (BYTE *)&buffer->offsets[offset_count];
+        DMUS_INSTRUMENT *dmus_instrument;
+        DMUS_REGION *dmus_region = NULL;
+        UINT index = 0;
+
+        buffer->info.dwDLType = DMUS_DOWNLOADINFO_INSTRUMENT2;
+        buffer->info.dwNumOffsetTableEntries = offset_count;
+        buffer->info.cbSize = size;
+
+        buffer->offsets[index++] = ptr - (BYTE *)buffer;
+        dmus_instrument = (DMUS_INSTRUMENT *)ptr;
+        ptr += sizeof(DMUS_INSTRUMENT);
+
+        dmus_instrument->ulPatch = MIDILOCALE2Patch(&This->header.Locale);
+        dmus_instrument->ulFirstRegionIdx = 0;
+        dmus_instrument->ulCopyrightIdx = 0;
+        dmus_instrument->ulGlobalArtIdx = 0;
+
+        write_articulation_download(&This->articulations, buffer->offsets, &ptr, index,
+                &dmus_instrument->ulGlobalArtIdx, &index);
+
+        LIST_FOR_EACH_ENTRY(region, &This->regions, struct region, entry)
+        {
+            if (dmus_region) dmus_region->ulNextRegionIdx = index;
+            else dmus_instrument->ulFirstRegionIdx = index;
+
+            buffer->offsets[index++] = ptr - (BYTE *)buffer;
+            dmus_region = (DMUS_REGION *)ptr;
+            ptr += sizeof(DMUS_REGION);
+
+            dmus_region->RangeKey = region->header.RangeKey;
+            dmus_region->RangeVelocity = region->header.RangeVelocity;
+            dmus_region->fusOptions = region->header.fusOptions;
+            dmus_region->usKeyGroup = region->header.usKeyGroup;
+            dmus_region->ulRegionArtIdx = 0;
+            dmus_region->ulNextRegionIdx = 0;
+            dmus_region->ulFirstExtCkIdx = 0;
+            dmus_region->WaveLink = region->wave_link;
+            dmus_region->WSMP = region->wave_sample;
+            dmus_region->WLOOP[0] = region->wave_loop;
+
+            if (SUCCEEDED(hr = collection_get_wave(This->collection, region->wave_link.ulTableIndex, &wave)))
+            {
+                hr = wave_download_to_port(wave, port, &dmus_region->WaveLink.ulTableIndex);
+                IUnknown_Release(wave);
+            }
+            if (FAILED(hr)) goto failed;
+
+            write_articulation_download(&region->articulations, buffer->offsets, &ptr, index,
+                    &dmus_region->ulRegionArtIdx, &index);
+        }
+
+        if (FAILED(hr = IDirectMusicPortDownload_Download(port, download))) goto failed;
+    }
+
+    This->download = download;
+
+done:
+    *downloaded = &This->IDirectMusicDownloadedInstrument_iface;
+    IDirectMusicDownloadedInstrument_AddRef(*downloaded);
+    return S_OK;
+
+failed:
+    WARN("Failed to download instrument to port, hr %#lx\n", hr);
+    IDirectMusicDownload_Release(download);
+    return hr;
+}
+
+HRESULT instrument_unload_from_port(IDirectMusicDownloadedInstrument *iface, IDirectMusicPortDownload *port)
+{
+    struct instrument *This = impl_from_IDirectMusicDownloadedInstrument(iface);
+    struct download_buffer *buffer;
+    DWORD size;
+    HRESULT hr;
+
+    if (!This->download) return DMUS_E_NOT_DOWNLOADED_TO_PORT;
+
+    if (FAILED(hr = IDirectMusicPortDownload_Unload(port, This->download)))
+        WARN("Failed to unload instrument download buffer, hr %#lx\n", hr);
+    else if (SUCCEEDED(hr = IDirectMusicDownload_GetBuffer(This->download, (void **)&buffer, &size)))
+    {
+        IDirectMusicDownload *wave_download;
+        DMUS_INSTRUMENT *instrument;
+        BYTE *ptr = (BYTE *)buffer;
+        DMUS_REGION *region;
+        UINT index;
+
+        instrument = (DMUS_INSTRUMENT *)(ptr + buffer->offsets[0]);
+        for (index = instrument->ulFirstRegionIdx; index; index = region->ulNextRegionIdx)
+        {
+            region = (DMUS_REGION *)(ptr + buffer->offsets[index]);
+
+            if (FAILED(hr = IDirectMusicPortDownload_GetBuffer(port, region->WaveLink.ulTableIndex, &wave_download)))
+                WARN("Failed to get wave download with id %#lx, hr %#lx\n", region->WaveLink.ulTableIndex, hr);
+            else
+            {
+                if (FAILED(hr = IDirectMusicPortDownload_Unload(port, wave_download)))
+                    WARN("Failed to unload wave download buffer, hr %#lx\n", hr);
+                IDirectMusicDownload_Release(wave_download);
+            }
+        }
+    }
+
+    IDirectMusicDownload_Release(This->download);
+    This->download = NULL;
+
+    return hr;
 }
