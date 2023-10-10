@@ -561,6 +561,7 @@ SOURCES = \
 	ndrtypes.h \
 	netcfgx.idl \
 	netcon.idl \
+	netevent.h \
 	netfw.idl \
 	netioapi.h \
 	netiodef.h \
@@ -733,6 +734,7 @@ SOURCES = \
 	structuredquerycondition.idl \
 	svrapi.h \
 	synchapi.h \
+	systemmediatransportcontrolsinterop.idl \
 	t2embapi.h \
 	tapi.h \
 	taskschd.idl \

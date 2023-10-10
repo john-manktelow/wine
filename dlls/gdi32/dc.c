@@ -235,6 +235,12 @@ static BOOL print_copy_devmode( struct print *print, const DEVMODEW *devmode )
 HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
                       const DEVMODEW *devmode )
 {
+    PRINTER_DEFAULTSW prn_defaults =
+    {
+        .pDatatype = NULL,
+        .pDevMode = (DEVMODEW *)devmode,
+        .DesiredAccess = PRINTER_ACCESS_USE
+    };
     UNICODE_STRING device_str, output_str;
     driver_entry_point entry_point = NULL;
     const WCHAR *display = NULL, *p;
@@ -280,7 +286,7 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
         ERR( "no driver found for %s\n", debugstr_w(buf) );
         return 0;
     }
-    else if (!OpenPrinterW( (WCHAR *)device, &hspool, NULL ))
+    else if (!OpenPrinterW( (WCHAR *)device, &hspool, &prn_defaults ))
     {
         return 0;
     }
@@ -518,7 +524,18 @@ HDC WINAPI ResetDCW( HDC hdc, const DEVMODEW *devmode )
     print = get_dc_print( dc_attr );
     if (print && print->flags & CALL_END_PAGE) return 0;
     if (!NtGdiResetDC( hdc, devmode, NULL, NULL, NULL )) return 0;
-    if (print && !print_copy_devmode( print, devmode )) return 0;
+    if (print)
+    {
+        PRINTER_DEFAULTSW prn_defaults =
+        {
+            .pDatatype = NULL,
+            .pDevMode = (DEVMODEW *)devmode,
+            .DesiredAccess = PRINTER_ACCESS_USE
+        };
+
+        if (!print_copy_devmode( print, devmode )) return 0;
+        ResetPrinterW( print->printer, &prn_defaults );
+    }
     return hdc;
 }
 
@@ -1365,7 +1382,8 @@ BOOL WINAPI SetMiterLimit( HDC hdc, FLOAT limit, FLOAT *old_limit )
 {
     DC_ATTR *dc_attr;
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
-    /* FIXME: record EMFs */
+    if (dc_attr->emf && !EMFDC_SetMiterLimit( dc_attr, limit )) return 0;
+    if (limit < 1.0f) return FALSE;
     if (old_limit) *old_limit = dc_attr->miter_limit;
     dc_attr->miter_limit = limit;
     return TRUE;
@@ -2246,7 +2264,7 @@ INT WINAPI SetMetaRgn( HDC hdc )
     DC_ATTR *dc_attr;
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
-    if (dc_attr->emf) FIXME( "EMFs are not yet supported\n" );
+    if (dc_attr->emf && !EMFDC_SetMetaRgn( dc_attr )) return FALSE;
     return NtGdiSetMetaRgn( hdc );
 }
 
