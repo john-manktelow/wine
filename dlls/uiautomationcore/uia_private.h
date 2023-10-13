@@ -219,6 +219,7 @@ HRESULT navigate_uia_node(struct uia_node *node, int nav_dir, HUIANODE *out_node
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers, int node_flags) DECLSPEC_HIDDEN;
 HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode) DECLSPEC_HIDDEN;
+HRESULT create_uia_node_from_hwnd(HWND hwnd, HUIANODE *out_node, int node_flags) DECLSPEC_HIDDEN;
 HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition) DECLSPEC_HIDDEN;
 BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
 
@@ -269,5 +270,6 @@ BOOL uia_hwnd_is_visible(HWND hwnd) DECLSPEC_HIDDEN;
 BOOL uia_is_top_level_hwnd(HWND hwnd) DECLSPEC_HIDDEN;
 BOOL uia_hwnd_map_check_hwnd(struct rb_tree *hwnd_map, HWND hwnd) DECLSPEC_HIDDEN;
 HRESULT uia_hwnd_map_add_hwnd(struct rb_tree *hwnd_map, HWND hwnd) DECLSPEC_HIDDEN;
+void uia_hwnd_map_remove_hwnd(struct rb_tree *hwnd_map, HWND hwnd) DECLSPEC_HIDDEN;
 void uia_hwnd_map_init(struct rb_tree *hwnd_map) DECLSPEC_HIDDEN;
 void uia_hwnd_map_destroy(struct rb_tree *hwnd_map) DECLSPEC_HIDDEN;

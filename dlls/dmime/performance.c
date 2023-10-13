@@ -20,7 +20,6 @@
 
 #include "dmime_private.h"
 #include "wine/rbtree.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 
@@ -1632,6 +1631,7 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
 {
     struct performance *This = impl_from_IDirectMusicTool(iface);
     struct message *message = message_from_DMUS_PMSG(msg);
+    HRESULT hr;
 
     FIXME("(%p, %p, %p): semi-stub\n", This, performance, msg);
 
@@ -1642,7 +1642,6 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         DMUS_NOTIFICATION_PMSG *notif = (DMUS_NOTIFICATION_PMSG *)msg;
         struct message *previous;
         BOOL enabled = FALSE;
-        HRESULT hr;
 
         if (IsEqualGUID(&notif->guidNotificationType, &GUID_NOTIFICATION_SEGMENT)
                 && notif->dwNotificationOption == DMUS_NOTIFICATION_SEGEND)
@@ -1671,6 +1670,11 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         SetEvent(This->notification_event);
         return S_OK;
     }
+
+    case DMUS_PMSGT_WAVE:
+        if (FAILED(hr = IDirectSoundBuffer_Play((IDirectSoundBuffer *)msg->punkUser, 0, 0, 0)))
+            WARN("Failed to play wave buffer, hr %#lx\n", hr);
+        break;
 
     default:
         FIXME("Unhandled message type %#lx\n", msg->dwType);
@@ -1731,4 +1735,18 @@ HRESULT create_dmperformance(REFIID iid, void **ret_iface)
     hr = IDirectMusicPerformance8_QueryInterface(&obj->IDirectMusicPerformance8_iface, iid, ret_iface);
     IDirectMusicPerformance_Release(&obj->IDirectMusicPerformance8_iface);
     return hr;
+}
+
+static inline struct performance *unsafe_impl_from_IDirectMusicPerformance8(IDirectMusicPerformance8 *iface)
+{
+    if (iface->lpVtbl != &performance_vtbl) return NULL;
+    return CONTAINING_RECORD(iface, struct performance, IDirectMusicPerformance8_iface);
+}
+
+HRESULT performance_get_dsound(IDirectMusicPerformance8 *iface, IDirectSound **dsound)
+{
+    struct performance *This = unsafe_impl_from_IDirectMusicPerformance8(iface);
+    if (!This || !(*dsound = This->dsound)) return E_FAIL;
+    IDirectSound_AddRef(*dsound);
+    return S_OK;
 }
