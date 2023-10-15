@@ -1626,6 +1626,35 @@ static HRESULT WINAPI performance_tool_GetMediaTypes(IDirectMusicTool *iface, DW
     return E_NOTIMPL;
 }
 
+static HRESULT performance_send_midi_pmsg(struct performance *This, DMUS_PMSG *msg, UINT flags,
+        BYTE status, BYTE byte1, BYTE byte2)
+{
+    IDirectMusicPerformance8 *performance = &This->IDirectMusicPerformance8_iface;
+    DMUS_MIDI_PMSG *midi;
+    HRESULT hr;
+
+    if (FAILED(hr = IDirectMusicPerformance8_AllocPMsg(performance, sizeof(*midi),
+            (DMUS_PMSG **)&midi)))
+        return hr;
+
+    if (flags & DMUS_PMSGF_REFTIME) midi->rtTime = msg->rtTime;
+    if (flags & DMUS_PMSGF_MUSICTIME) midi->mtTime = msg->mtTime;
+    midi->dwFlags = flags;
+    midi->dwPChannel = msg->dwPChannel;
+    midi->dwVirtualTrackID = msg->dwVirtualTrackID;
+    midi->dwVoiceID = msg->dwVoiceID;
+    midi->dwGroupID = msg->dwGroupID;
+    midi->dwType = DMUS_PMSGT_MIDI;
+    midi->bStatus = status;
+    midi->bByte1 = byte1;
+    midi->bByte2 = byte2;
+
+    if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, (DMUS_PMSG *)midi)))
+        IDirectMusicPerformance8_FreePMsg(performance, (DMUS_PMSG *)midi);
+
+    return hr;
+}
+
 static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         IDirectMusicPerformance *performance, DMUS_PMSG *msg)
 {
@@ -1637,6 +1666,74 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
 
     switch (msg->dwType)
     {
+    case DMUS_PMSGT_MIDI:
+    {
+        static const UINT event_size = sizeof(DMUS_EVENTHEADER) + sizeof(DWORD);
+        DMUS_BUFFERDESC desc = {.dwSize = sizeof(desc), .cbBuffer = 2 * event_size};
+        DMUS_MIDI_PMSG *midi = (DMUS_MIDI_PMSG *)msg;
+        IDirectMusicBuffer *buffer;
+        IDirectMusicPort *port;
+        DWORD group, channel;
+        UINT value = 0;
+
+        if (FAILED(hr = IDirectMusicPerformance_PChannelInfo(performance, msg->dwPChannel,
+                &port, &group, &channel)))
+        {
+            WARN("Failed to get message port, hr %#lx\n", hr);
+            return DMUS_S_FREE;
+        }
+
+        value |= channel;
+        value |= (UINT)midi->bStatus;
+        value |= (UINT)midi->bByte1 << 8;
+        value |= (UINT)midi->bByte2 << 16;
+
+        if (SUCCEEDED(hr = IDirectMusic_CreateMusicBuffer(This->dmusic, &desc, &buffer, NULL)))
+        {
+            hr = IDirectMusicBuffer_PackStructured(buffer, msg->rtTime, group, value);
+            if (SUCCEEDED(hr)) hr = IDirectMusicPort_PlayBuffer(port, buffer);
+            IDirectMusicBuffer_Release(buffer);
+        }
+
+        IDirectMusicPort_Release(port);
+        break;
+    }
+
+    case DMUS_PMSGT_NOTE:
+    {
+        DMUS_NOTE_PMSG *note = (DMUS_NOTE_PMSG *)msg;
+
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_REFTIME | DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                0x90 /* NOTE_ON */, note->bMidiValue, note->bVelocity)))
+            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+        msg->mtTime += note->mtDuration;
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_QUEUE,
+                0x80 /* NOTE_OFF */, note->bMidiValue, 0)))
+            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+        break;
+    }
+
+    case DMUS_PMSGT_PATCH:
+    {
+        DMUS_PATCH_PMSG *patch = (DMUS_PATCH_PMSG *)msg;
+
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_REFTIME | DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                0xb0 /* Control Change */, 0x00 /* CC: Bank MSB */, patch->byMSB)))
+            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_REFTIME | DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                0xb0 /* Control Change */, 0x20 /* CC: Bank LSB */, patch->byLSB)))
+            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_REFTIME | DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                0xc0 /* Program Change */, patch->byInstrument, 0)))
+            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+        break;
+    }
+
     case DMUS_PMSGT_NOTIFICATION:
     {
         DMUS_NOTIFICATION_PMSG *notif = (DMUS_NOTIFICATION_PMSG *)msg;

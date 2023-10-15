@@ -104,24 +104,24 @@ static void test_open_close(void)
 
     SetLastError(0xdeadbeef);
     handle = OpenEventLogA(NULL, NULL);
-    ok(handle == NULL, "Didn't expect a handle\n");
+    ok(handle == NULL, "OpenEventLogA() succeeded\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     handle = OpenEventLogA("IDontExist", NULL);
-    ok(handle == NULL, "Didn't expect a handle\n");
+    ok(handle == NULL, "OpenEventLogA(IDontExist,) succeeded\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     handle = OpenEventLogA("IDontExist", "deadbeef");
-    ok(handle == NULL, "Didn't expect a handle\n");
+    ok(handle == NULL, "OpenEventLogA(IDontExist,deadbeef) succeeded\n");
     ok(GetLastError() == RPC_S_SERVER_UNAVAILABLE ||
        GetLastError() == RPC_S_INVALID_NET_ADDR, /* Some Vista and Win7 */
        "Expected RPC_S_SERVER_UNAVAILABLE, got %ld\n", GetLastError());
 
     /* This one opens the Application log */
     handle = OpenEventLogA(NULL, "deadbeef");
-    ok(handle != NULL, "Expected a handle : %ld\n", GetLastError());
+    ok(handle != NULL, "OpenEventLogA(deadbeef) failed : %ld\n", GetLastError());
     ret = CloseEventLog(handle);
     ok(ret, "Expected success : %ld\n", GetLastError());
     /* Close a second time */
@@ -135,11 +135,11 @@ static void test_open_close(void)
 
     /* Empty servername should be read as local server */
     handle = OpenEventLogA("", "Application");
-    ok(handle != NULL, "Expected a handle : %ld\n", GetLastError());
+    ok(handle != NULL, "OpenEventLogA('',Application) failed : %ld\n", GetLastError());
     CloseEventLog(handle);
 
     handle = OpenEventLogA(NULL, "Application");
-    ok(handle != NULL, "Expected a handle : %ld\n", GetLastError());
+    ok(handle != NULL, "OpenEventLogA(Application) failed : %ld\n", GetLastError());
     CloseEventLog(handle);
 }
 
@@ -780,6 +780,7 @@ static void test_readwrite(void)
     DWORD i;
     char *localcomputer = NULL;
     DWORD size;
+    void* buf;
 
     if (pCreateWellKnownSid)
     {
@@ -817,6 +818,7 @@ static void test_readwrite(void)
         Sleep(2000);
 
         handle = OpenEventLogA(NULL, eventlogname);
+        ok(handle != NULL, "OpenEventLogA(%s) failed : %ld\n", eventlogname, GetLastError());
         count = 0xdeadbeef;
         GetNumberOfEventLogRecords(handle, &count);
         if (count != 0)
@@ -881,6 +883,8 @@ static void test_readwrite(void)
         DWORD oldest;
         BOOL run_sidtests = read_write[i].evt_sid & sidavailable;
 
+        winetest_push_context("%lu:%s", i, read_write[i].evt_src);
+
         /* We don't need to use RegisterEventSource to report events */
         if (i % 2)
             handle = OpenEventLogA(NULL, read_write[i].evt_src);
@@ -917,9 +921,11 @@ static void test_readwrite(void)
         else
             ret = DeregisterEventSource(handle);
         ok(ret, "Expected success : %ld\n", GetLastError());
+        winetest_pop_context();
     }
 
     handle = OpenEventLogA(NULL, eventlogname);
+    ok(handle != NULL, "OpenEventLogA(%s) failed : %ld\n", eventlogname, GetLastError());
     count = 0xdeadbeef;
     ret = GetNumberOfEventLogRecords(handle, &count);
     ok(ret, "Expected success : %ld\n", GetLastError());
@@ -955,11 +961,12 @@ static void test_readwrite(void)
 
     /* Read all events from our created eventlog, one by one */
     handle = OpenEventLogA(NULL, eventlogname);
-    ok(handle != NULL, "Failed to open Event Log, got %ld\n", GetLastError());
+    ok(handle != NULL, "OpenEventLogA(%s) failed : %ld\n", eventlogname, GetLastError());
     i = 0;
+    size = sizeof(EVENTLOGRECORD) + 128;
+    buf = HeapAlloc(GetProcessHeap(), 0, size);
     for (;;)
     {
-        void *buf;
         DWORD read, needed;
         EVENTLOGRECORD *record;
         char *sourcename, *computername;
@@ -967,23 +974,33 @@ static void test_readwrite(void)
         char *ptr;
         BOOL run_sidtests = read_write[i].evt_sid & sidavailable;
 
-        buf = HeapAlloc(GetProcessHeap(), 0, sizeof(EVENTLOGRECORD));
+        winetest_push_context("%lu", i);
+
         SetLastError(0xdeadbeef);
         ret = ReadEventLogA(handle, EVENTLOG_SEQUENTIAL_READ | EVENTLOG_FORWARDS_READ,
                             0, buf, sizeof(EVENTLOGRECORD), &read, &needed);
         ok(!ret, "Expected failure\n");
         if (!ret && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
         {
-            HeapFree(GetProcessHeap(), 0, buf);
             ok(GetLastError() == ERROR_HANDLE_EOF, "record %ld, got %ld\n", i, GetLastError());
+            winetest_pop_context();
             break;
         }
 
-        buf = HeapReAlloc(GetProcessHeap(), 0, buf, needed);
+        if (needed > size)
+        {
+             HeapFree(GetProcessHeap(), 0, buf);
+             size = needed;
+             buf = HeapAlloc(GetProcessHeap(), 0, size);
+        }
         ret = ReadEventLogA(handle, EVENTLOG_SEQUENTIAL_READ | EVENTLOG_FORWARDS_READ,
                             0, buf, needed, &read, &needed);
         ok(ret, "Expected success: %ld\n", GetLastError());
-
+        if (!ret)
+        {
+             winetest_pop_context();
+             break;
+        }
         record = (EVENTLOGRECORD *)buf;
 
         ok(record->Length == read,
@@ -1049,14 +1066,15 @@ static void test_readwrite(void)
         ok(record->Length == *(DWORD *)((BYTE *)buf + record->Length - sizeof(DWORD)),
            "Expected the closing DWORD to contain the length of the record\n");
 
-        HeapFree(GetProcessHeap(), 0, buf);
+        winetest_pop_context();
         i++;
     }
+    HeapFree(GetProcessHeap(), 0, buf);
     CloseEventLog(handle);
 
     /* Test clearing a real eventlog */
     handle = OpenEventLogA(NULL, eventlogname);
-    ok(handle != NULL, "Failed to open Event Log, got %ld\n", GetLastError());
+    ok(handle != NULL, "OpenEventLogA(%s) failed : %ld\n", eventlogname, GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = ClearEventLogA(handle, NULL);
@@ -1330,7 +1348,7 @@ static void test_eventlog_start(void)
     handle = OpenEventLogW(0, L"System");
     if (!handle && (GetLastError() == ERROR_ACCESS_DENIED || GetLastError() == RPC_S_SERVER_UNAVAILABLE))
     {
-        win_skip( "Can't open event log\n" );
+        win_skip( "Can't open System event log\n" );
         return;
     }
     ok(handle != NULL, "OpenEventLogW(System) failed : %ld\n", GetLastError());
