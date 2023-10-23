@@ -578,7 +578,7 @@
 @ stdcall -import PerfSetCounterRefValue(long ptr long ptr)
 @ stdcall -import PerfSetCounterSetInfo(long ptr long)
 # @ stub PerfSetULongCounterValue
-# @ stub PerfSetULongLongCounterValue
+@ stdcall -import PerfSetULongLongCounterValue(ptr ptr long long)
 @ stdcall -import PerfStartProvider(ptr ptr ptr)
 @ stdcall -import PerfStartProviderEx(ptr ptr ptr)
 @ stdcall -import PerfStopProvider(long)
