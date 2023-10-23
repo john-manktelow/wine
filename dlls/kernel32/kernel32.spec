@@ -1187,7 +1187,7 @@
 @ stdcall -import QueryDosDeviceW(wstr ptr long)
 @ stdcall -import QueryFullProcessImageNameA(ptr long ptr ptr)
 @ stdcall -import QueryFullProcessImageNameW(ptr long ptr ptr)
-# @ stub QueryIdleProcessorCycleTime
+@ stdcall QueryIdleProcessorCycleTime(ptr ptr)
 # @ stub QueryIdleProcessorCycleTimeEx
 @ stdcall QueryInformationJobObject(long long ptr long ptr)
 @ stdcall -import QueryMemoryResourceNotification(ptr ptr)

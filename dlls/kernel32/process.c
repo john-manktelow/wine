@@ -965,6 +965,17 @@ BOOL WINAPI QueryUmsThreadInformation(PUMS_CONTEXT ctx, UMS_THREAD_INFO_CLASS cl
     return FALSE;
 }
 
+
+/***********************************************************************
+ *           QueryIdleProcessorCycleTime   (KERNEL32.@)
+ */
+BOOL WINAPI QueryIdleProcessorCycleTime(ULONG* bufferLen, PULONG64* processorIdleCycleTime)
+{
+    FIXME("stub\n");
+    *bufferLen = 0;
+    return TRUE;
+}
+
 /***********************************************************************
  *           SetUmsThreadInformation   (KERNEL32.@)
  */
