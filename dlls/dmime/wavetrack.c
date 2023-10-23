@@ -24,7 +24,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 struct wave_item {
     struct list entry;
     DMUS_IO_WAVE_ITEM_HEADER header;
-    IUnknown *object;
+    IDirectMusicObject *object;
     IDirectSoundBuffer *buffer;
 };
 
@@ -106,7 +106,7 @@ static ULONG WINAPI wave_track_Release(IDirectMusicTrack8 *iface)
             {
                 list_remove(&item->entry);
                 if (item->buffer) IDirectSoundBuffer_Release(item->buffer);
-                if (item->object) IUnknown_Release(item->object);
+                if (item->object) IDirectMusicObject_Release(item->object);
                 free(item);
             }
 
@@ -273,6 +273,8 @@ static HRESULT WINAPI wave_track_SetParam(IDirectMusicTrack8 *iface, REFGUID typ
                 }
             }
         }
+
+        return hr;
     }
     if (IsEqualGUID(type, &GUID_Enable_Auto_Download)) {
         FIXME("GUID_Enable_Auto_Download not handled yet\n");
@@ -296,6 +298,8 @@ static HRESULT WINAPI wave_track_SetParam(IDirectMusicTrack8 *iface, REFGUID typ
                 item->buffer = NULL;
             }
         }
+
+        return S_OK;
     }
 
     return DMUS_E_TYPE_UNSUPPORTED;
@@ -465,7 +469,7 @@ static HRESULT parse_wave_item(struct wave_part *part, IStream *stream, struct c
         hr = DMUS_E_UNSUPPORTED_STREAM;
         goto error;
     }
-    if (FAILED(hr = dmobj_parsereference(stream, &chunk, (IDirectMusicObject **)&item->object)))
+    if (FAILED(hr = dmobj_parsereference(stream, &chunk, &item->object)))
         goto error;
 
     list_add_tail(&part->items, &item->entry);
