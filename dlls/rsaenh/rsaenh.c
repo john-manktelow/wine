@@ -212,6 +212,7 @@ static const PROV_ENUMALGS_EX aProvEnumAlgsEx[5][RSAENH_MAX_ENUMALGS+1] =
   {CALG_RSA_SIGN, 1024, 384, 16384, CRYPT_FLAG_SIGNING|CRYPT_FLAG_IPSEC, S("RSA_SIGN"), S("RSA Signature")},
   {CALG_RSA_KEYX, 1024, 384, 16384, CRYPT_FLAG_SIGNING|CRYPT_FLAG_IPSEC, S("RSA_KEYX"), S("RSA Key Exchange")},
   {CALG_HMAC, 0, 0, 0, 0, S("HMAC"), S("Hugo's MAC (HMAC)")},
+  {CALG_SHA_512, 512, 512, 512, CRYPT_FLAG_SIGNING, S("SHA-512"), S("Secure Hash Algorithm (SHA-512)")},
   {0, 0, 0, 0, 0, S(""), S("")}
  },
  {

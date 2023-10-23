@@ -2988,6 +2988,7 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_NIST_sha256                   "2.16.840.1.101.3.4.2.1"
 #define szOID_NIST_sha384                   "2.16.840.1.101.3.4.2.2"
 #define szOID_NIST_sha512                   "2.16.840.1.101.3.4.2.3"
+#define szOID_NIST_AES256_CBC               "2.16.840.1.101.3.4.1.42"
 #define szOID_COMMON_NAME                   "2.5.4.3"
 #define szOID_SUR_NAME                      "2.5.4.4"
 #define szOID_DEVICE_SERIAL_NUMBER          "2.5.4.5"

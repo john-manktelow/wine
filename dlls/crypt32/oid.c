@@ -1256,6 +1256,8 @@ static const struct OIDInfoConstructor {
  { 2, szOID_RSA_RC4,                   CALG_RC4,      L"rc4", NULL },
  { 2, szOID_RSA_SMIMEalgCMS3DESwrap,   CALG_3DES,     L"CMS3DESwrap", NULL },
  { 2, szOID_RSA_SMIMEalgCMSRC2wrap,    CALG_RC2,      L"CMSRC2wrap", NULL },
+ { 2, szOID_NIST_AES256_CBC,           CALG_AES_256,  L"AES", NULL },
+ 
 
  { 3, szOID_RSA_RSA,                   CALG_RSA_KEYX, L"RSA", NULL },
  { 3, szOID_X957_DSA,                  CALG_DSS_SIGN, L"DSA", &noNullBlob },
