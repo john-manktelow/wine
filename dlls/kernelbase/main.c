@@ -217,12 +217,25 @@ ULONG WINAPI PerfSetULongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE 
 }
 
 
+
+
+/***********************************************************************
+ *           PerfIncrementULongCounterValue   (KERNELBASE.@)
+ */
+ULONG WINAPI PerfIncrementULongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance, ULONG counterid, ULONG value)
+{
+    FIXME( "provider %p, instance %p, counterid %lu, address %lu stub.\n",
+           provider, instance, counterid, value );
+    return STATUS_SUCCESS;
+}
+
+
 /***********************************************************************
  *           PerfIncrementULongLongCounterValue   (KERNELBASE.@)
  */
 ULONG WINAPI PerfIncrementULongLongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance, ULONG counterid, ULONGLONG value)
 {
-    FIXME( "provider %p, instance %p, counterid %lu, address %I64u stub.\n",
+    FIXME( "provider %p, instance %p, counterid %lu, address %lu stub.\n",
            provider, instance, counterid, value );
     return STATUS_SUCCESS;
 }
@@ -238,7 +251,7 @@ ULONG WINAPI PerfSetULongLongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTA
     struct counterset_instance *inst;
     unsigned int i;
 
-    TRACE( "provider %p, instance %p, counterid %lu, address %I64u semi-stub.\n",
+    TRACE( "provider %p, instance %p, counterid %lu, address %lu semi-stub.\n",
            provider, instance, counterid, value );
 
     if (!prov || !instance) return ERROR_INVALID_PARAMETER;

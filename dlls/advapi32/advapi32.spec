@@ -564,6 +564,7 @@
 # @ stub PerfEnumerateCounterSetInstances
 # @ stub PerfIncrementULongCounterValue
 # @ stub PerfIncrementULongLongCounterValue
+@ stdcall -import PerfIncrementULongCounterValue(long ptr long long)
 @ stdcall -import PerfIncrementULongLongCounterValue(long ptr long int64)
 @ stdcall PerfOpenQueryHandle(wstr ptr)
 @ stdcall PerfQueryCounterData(long ptr long ptr)
