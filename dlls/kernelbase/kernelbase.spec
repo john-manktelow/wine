@@ -1182,7 +1182,8 @@
 @ stdcall PerfCreateInstance(long ptr wstr long)
 # @ stub PerfDecrementULongCounterValue
 # @ stub PerfDecrementULongLongCounterValue
-@ stdcall PerfSetULongLongCounterValue(ptr ptr int64 long)
+@ stdcall PerfSetULongCounterValue(long ptr long long)
+@ stdcall PerfSetULongLongCounterValue(long ptr long int64)
 @ stdcall PerfDeleteInstance(long ptr)
 # @ stub PerfIncrementULongCounterValue
 # @ stub PerfIncrementULongLongCounterValue

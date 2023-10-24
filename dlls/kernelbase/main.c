@@ -26,6 +26,7 @@
 #include "shlwapi.h"
 #include "perflib.h"
 #include "winternl.h"
+#include "winperf.h"
 
 #include "wine/debug.h"
 #include "kernelbase.h"
@@ -185,12 +186,64 @@ static struct perf_provider *perf_provider_from_handle(HANDLE prov)
 }
 
 /***********************************************************************
+ *           PerfSetULongCounterValue   (KERNELBASE.@)
+ */
+ULONG WINAPI PerfSetULongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance,
+                                    ULONG counterid, ULONG value)
+{
+    struct perf_provider *prov = perf_provider_from_handle( provider );
+    struct counterset_template *template;
+    struct counterset_instance *inst;
+    unsigned int i;
+
+    TRACE( "provider %p, instance %p, counterid %lu, address %lu semi-stub.\n",
+           provider, instance, counterid, value );
+
+    if (!prov || !instance) return ERROR_INVALID_PARAMETER;
+
+    inst = CONTAINING_RECORD(instance, struct counterset_instance, instance);
+    template = inst->template;
+
+    for (i = 0; i < template->counterset.NumCounters; ++i)
+        if (template->counter[i].CounterId == counterid) break;
+
+    if (i == template->counterset.NumCounters) return ERROR_NOT_FOUND;
+    if (template->counter[i].Attrib & PERF_ATTRIB_BY_REFERENCE) return ERROR_INVALID_PARAMETER;
+    if (template->counter[i].Type & PERF_SIZE_LARGE) return ERROR_INVALID_PARAMETER;
+
+    *(ULONG*)((BYTE *)&inst->instance + sizeof(PERF_COUNTERSET_INSTANCE) + template->counter[i].Offset) = value;
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
  *           PerfSetULongLongCounterValue   (KERNELBASE.@)
  */
-ULONG WINAPI PerfSetULongLongCounterValue(HANDLE provider, PPERF_COUNTERSET_INSTANCE instance, ULONG counterId, ULONGLONG value)
+ULONG WINAPI PerfSetULongLongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance,
+                                    ULONG counterid, ULONGLONG value)
 {
-    FIXME("stub: handle %p, instance %p, counterId %lu, value %lu", provider, instance, counterId, value);
-    return ERROR_SUCCESS;
+    struct perf_provider *prov = perf_provider_from_handle( provider );
+    struct counterset_template *template;
+    struct counterset_instance *inst;
+    unsigned int i;
+
+    TRACE( "provider %p, instance %p, counterid %lu, address %I64u semi-stub.\n",
+           provider, instance, counterid, value );
+
+    if (!prov || !instance) return ERROR_INVALID_PARAMETER;
+
+    inst = CONTAINING_RECORD(instance, struct counterset_instance, instance);
+    template = inst->template;
+
+    for (i = 0; i < template->counterset.NumCounters; ++i)
+        if (template->counter[i].CounterId == counterid) break;
+    if (i == template->counterset.NumCounters) return ERROR_NOT_FOUND;
+    if (template->counter[i].Attrib & PERF_ATTRIB_BY_REFERENCE) return ERROR_INVALID_PARAMETER;
+    if (!(template->counter[i].Type & PERF_SIZE_LARGE)) return ERROR_INVALID_PARAMETER;
+
+    *(ULONGLONG*)((BYTE *)&inst->instance + sizeof(PERF_COUNTERSET_INSTANCE) + template->counter[i].Offset) = value;
+
+    return STATUS_SUCCESS;
 }
 
 /***********************************************************************
@@ -342,6 +395,9 @@ ULONG WINAPI PerfSetCounterRefValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *i
         if (template->counter[i].CounterId == counterid) break;
 
     if (i == template->counterset.NumCounters) return ERROR_NOT_FOUND;
+    if (!(template->counter[i].Attrib & PERF_ATTRIB_BY_REFERENCE)) return ERROR_INVALID_PARAMETER;
+
+
     *(void **)((BYTE *)&inst->instance + sizeof(PERF_COUNTERSET_INSTANCE) + template->counter[i].Offset) = address;
 
     return STATUS_SUCCESS;
