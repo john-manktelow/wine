@@ -216,6 +216,17 @@ ULONG WINAPI PerfSetULongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE 
     return STATUS_SUCCESS;
 }
 
+
+/***********************************************************************
+ *           PerfIncrementULongLongCounterValue   (KERNELBASE.@)
+ */
+ULONG WINAPI PerfIncrementULongLongCounterValue(HANDLE provider, PERF_COUNTERSET_INSTANCE *instance, ULONG counterid, ULONGLONG value)
+{
+    FIXME( "provider %p, instance %p, counterid %lu, address %I64u stub.\n",
+           provider, instance, counterid, value );
+    return ERROR_SUCCESS;
+}
+
 /***********************************************************************
  *           PerfSetULongLongCounterValue   (KERNELBASE.@)
  */

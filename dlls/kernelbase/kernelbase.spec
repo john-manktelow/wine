@@ -1187,6 +1187,7 @@
 @ stdcall PerfDeleteInstance(long ptr)
 # @ stub PerfIncrementULongCounterValue
 # @ stub PerfIncrementULongLongCounterValue
+@stdcall PerfIncrementULongLongCounterValue(long ptr long int64)
 # @ stub PerfQueryInstance
 @ stdcall PerfSetCounterRefValue(long ptr long ptr)
 @ stdcall PerfSetCounterSetInfo(long ptr long)
