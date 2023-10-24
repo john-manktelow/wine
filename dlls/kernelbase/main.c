@@ -184,12 +184,9 @@ static struct perf_provider *perf_provider_from_handle(HANDLE prov)
     return (struct perf_provider *)prov;
 }
 
-ULONG WINAPI PerfSetULongLongCounterValue(
-   HANDLE                    provider,
-   PPERF_COUNTERSET_INSTANCE instance,
-   ULONG                     counterId,
-   ULONGLONG                 value
-)
+/***********************************************************************
+ *           PerfSetULongLongCounterValue   (KERNELBASE.@)
+ */ULONG WINAPI PerfSetULongLongCounterValue(HANDLE provider, PPERF_COUNTERSET_INSTANCE instsance, ULONG counterId, ULONGLONG value)
 {
     FIXME("stub");
     return ERROR_SUCCESS;
