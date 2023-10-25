@@ -113,7 +113,7 @@
 @ stdcall CryptDecodeObject(long str ptr long long ptr ptr)
 @ stdcall CryptDecodeObjectEx(long str ptr long long ptr ptr ptr)
 @ stub CryptDecryptAndVerifyMessageSignature
-@ stub CryptDecryptMessage
+@ stdcall CryptDecryptMessage(ptr ptr long ptr ptr ptr)
 @ stdcall CryptEncodeObject(long str ptr ptr ptr)
 @ stdcall CryptEncodeObjectEx(long str ptr long ptr ptr ptr)
 @ stdcall CryptEncryptMessage(ptr long ptr ptr long ptr ptr)

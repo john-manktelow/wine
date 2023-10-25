@@ -518,6 +518,28 @@ BOOL WINAPI CryptSignMessage(PCRYPT_SIGN_MESSAGE_PARA pSignPara,
     return ret;
 }
 
+BOOL WINAPI CryptDecryptMessage(PCRYPT_DECRYPT_MESSAGE_PARA pDecryptPara,
+ const BYTE *pbEncryptedBlob, DWORD cbEncryptedBlob, BYTE *pbDecrypted,
+ DWORD *pcbDecrypted, PCCERT_CONTEXT *ppXchgCert){
+
+    BOOL ret = FALSE;
+    HCRYPTMSG msg = 0;
+
+    TRACE("(%p, %p, %ld, %p, %p, %p, %p)\n", pDecryptPara, pbEncryptedBlob, cbEncryptedBlob, pbDecrypted, pcbDecrypted, ppXchgCert);
+
+    msg = CryptMsgOpenToDecode(pDecryptPara->dwMsgAndCertEncodingType, 0, 0, NULL, NULL, NULL);
+    ret = CryptMsgUpdate(msg, pbEncryptedBlob, cbEncryptedBlob, TRUE);
+
+    if (ret)
+            ret = CryptMsgGetParam(msg, CMSG_CONTENT_PARAM, 0, pbDecrypted,
+             pcbDecrypted);
+
+
+    CryptMsgClose(msg);
+    
+    return ret;
+ }
+
 BOOL WINAPI CryptEncryptMessage(PCRYPT_ENCRYPT_MESSAGE_PARA pEncryptPara,
  DWORD cRecipientCert, PCCERT_CONTEXT rgpRecipientCert[],
  const BYTE *pbToBeEncrypted, DWORD cbToBeEncrypted, BYTE *pbEncryptedBlob,
