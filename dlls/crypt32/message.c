@@ -528,12 +528,18 @@ BOOL WINAPI CryptDecryptMessage(PCRYPT_DECRYPT_MESSAGE_PARA pDecryptPara,
     TRACE("(%p, %p, %ld, %p, %p, %p, %p)\n", pDecryptPara, pbEncryptedBlob, cbEncryptedBlob, pbDecrypted, pcbDecrypted, ppXchgCert);
 
     msg = CryptMsgOpenToDecode(pDecryptPara->dwMsgAndCertEncodingType, 0, 0, NULL, NULL, NULL);
+    
+    TRACE("msg after CryptMsgOpenToDecode = %p", msg);
+
     ret = CryptMsgUpdate(msg, pbEncryptedBlob, cbEncryptedBlob, TRUE);
+
+    TRACE("ret after CryptMsgUpdate = %d", ret);
 
     if (ret)
             ret = CryptMsgGetParam(msg, CMSG_CONTENT_PARAM, 0, pbDecrypted,
              pcbDecrypted);
 
+    TRACE("ret after CryptMsgGetParam = %d", ret);
 
     CryptMsgClose(msg);
     
