@@ -522,10 +522,11 @@ BOOL WINAPI CryptDecryptMessage(PCRYPT_DECRYPT_MESSAGE_PARA pDecryptPara,
  const BYTE *pbEncryptedBlob, DWORD cbEncryptedBlob, BYTE *pbDecrypted,
  DWORD *pcbDecrypted, PCCERT_CONTEXT *ppXchgCert){
 
+
     BOOL ret = FALSE;
     HCRYPTMSG msg = 0;
 
-    TRACE("(%p, %p, %ld, %p, %p, %p, %p)\n", pDecryptPara, pbEncryptedBlob, cbEncryptedBlob, pbDecrypted, pcbDecrypted, ppXchgCert);
+    TRACE("semi-stub (%p, %p, %ld, %p, %p, %p, %p)\n", pDecryptPara, pbEncryptedBlob, cbEncryptedBlob, pbDecrypted, pcbDecrypted, ppXchgCert);
 
     msg = CryptMsgOpenToDecode(pDecryptPara->dwMsgAndCertEncodingType, 0, 0, NULL, NULL, NULL);
     
@@ -539,8 +540,8 @@ BOOL WINAPI CryptDecryptMessage(PCRYPT_DECRYPT_MESSAGE_PARA pDecryptPara,
             ret = CryptMsgGetParam(msg, CMSG_CONTENT_PARAM, 0, pbDecrypted,
              pcbDecrypted);
 
-    TRACE("ret after CryptMsgGetParam = %d", ret);
-
+    TRACE("ret after CryptMsgGetParam = %d, %ln, %s", ret, pcbDecrypted, debugstr_w(pbDecrypted));
+    
     CryptMsgClose(msg);
     
     return ret;
