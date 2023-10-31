@@ -108,7 +108,11 @@ static const AccountSid ACCOUNT_SIDS[] = {
     { WinOtherOrganizationSid, L"Other Organization", L"NT AUTHORITY", SidTypeWellKnownGroup },
     { WinBuiltinPerfMonitoringUsersSid, L"Performance Monitor Users", L"BUILTIN", SidTypeAlias },
     { WinBuiltinPerfLoggingUsersSid, L"Performance Log Users", L"BUILTIN", SidTypeAlias },
-    { WinBuiltinAnyPackageSid, L"ALL APPLICATION PACKAGES", L"APPLICATION PACKAGE AUTHORITY", SidTypeWellKnownGroup },
+    { WinBuiltinAnyPackageSid, L"ALL APPLICATION PACKAGES", L"APPLICATION PACKAGE AUTHORITY", SidTypeWellKnownGroup,},
+    {HackDocDBGatewaySid, L"DocDBGatewayService", L"JOHNM-DESKX", SidTypeUser },
+    {HackDocDBMasterSid, L"DocDBMasterService", L"JOHNM-DESKX", SidTypeUser },
+    {HackDocDBServerSid, L"DocDBServerService", L"JOHNM-DESKX", SidTypeUser },
+    
 };
 
 const char * debugstr_sid(PSID sid)
@@ -1272,19 +1276,24 @@ BOOL lookup_local_wellknown_name( const LSA_UNICODE_STRING *account_and_domain,
 
     for (i = 0; i < ARRAY_SIZE(ACCOUNT_SIDS); i++)
     {
+
         /* check domain first */
         if (domain.Buffer && !match_domain( i, &domain )) continue;
 
         if (match_account( i, &account ))
+
         {
+            TRACE("Account matched\n");
             DWORD len, sidLen = SECURITY_MAX_SID_SIZE;
 
             if (!(pSid = malloc( sidLen ))) return FALSE;
 
             if ((ret = CreateWellKnownSid( ACCOUNT_SIDS[i].type, NULL, pSid, &sidLen )))
             {
+                TRACE("ret from CreateWellKnownSid is %d\n", ret);
                 if (*cbSid < sidLen)
                 {
+                    TRACE("ERROR_INSUFFICIENT_BUFFER 1\n");
                     SetLastError(ERROR_INSUFFICIENT_BUFFER);
                     ret = FALSE;
                 }
@@ -1298,6 +1307,7 @@ BOOL lookup_local_wellknown_name( const LSA_UNICODE_STRING *account_and_domain,
             len = lstrlenW( ACCOUNT_SIDS[i].domain );
             if (*cchReferencedDomainName <= len || !ret)
             {
+                TRACE("ERROR_INSUFFICIENT_BUFFER 2\n");
                 SetLastError(ERROR_INSUFFICIENT_BUFFER);
                 len++;
                 ret = FALSE;
@@ -1308,6 +1318,7 @@ BOOL lookup_local_wellknown_name( const LSA_UNICODE_STRING *account_and_domain,
             }
 
             *cchReferencedDomainName = len;
+            TRACE("Before setting SID use, ret is %d\n", ret);
             if (ret)
                 *peUse = ACCOUNT_SIDS[i].name_use;
 
@@ -1331,6 +1342,7 @@ BOOL lookup_local_user_name( const LSA_UNICODE_STRING *account_and_domain,
     BOOL ret = TRUE;
 
     *handled = FALSE;
+
     split_domain_account( account_and_domain, &account, &domain );
 
     /* Let the current Unix user id masquerade as first Windows user account */
@@ -1344,6 +1356,7 @@ BOOL lookup_local_user_name( const LSA_UNICODE_STRING *account_and_domain,
         if (GetComputerNameW( userName, &nameLen ) &&
             (domain.Length / sizeof(WCHAR) != nameLen || wcsncmp( domain.Buffer, userName, nameLen )))
         {
+            TRACE("User is not on this computer (domain: %s)\n", domain.Buffer);
             SetLastError(ERROR_NONE_MAPPED);
             ret = FALSE;
         }

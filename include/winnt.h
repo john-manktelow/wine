@@ -4763,6 +4763,9 @@ typedef enum {
     WinLocalAccountSid                          = 105,
     WinLocalAccountAndAdministratorSid          = 106,
     WinAccountProtectedUsersSid                 = 107,
+    HackDocDBGatewaySid                         = 1001,
+    HackDocDBMasterSid                          = 1002,
+    HackDocDBServerSid                         = 1003,
 } WELL_KNOWN_SID_TYPE;
 
 /*
