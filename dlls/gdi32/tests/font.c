@@ -1186,7 +1186,7 @@ static void test_GetCharABCWidths(void)
     ok(!ret, "GetCharABCWidthsW should have failed\n");
 
     ret = GetCharABCWidthsW(hdc, 'a', 'a', abc);
-    ok(!ret, "GetCharABCWidthsW should have failed\n");
+    ok(ret || broken(!ret) /* < win10 */, "GetCharABCWidthsW should have succeeded\n");
 
     ret = GetCharABCWidthsFloatW(NULL, 'a', 'a', abcf);
     ok(!ret, "GetCharABCWidthsFloatW should have failed\n");
@@ -7573,9 +7573,10 @@ static int CALLBACK get_char_width_proc(const LOGFONTA *lf,
 
     ret = GetCharABCWidthsFloatA(dc, c, c, &abcf);
     ok(ret, "%s: GetCharABCWidths() failed\n", lf->lfFaceName);
-    if (GetCharABCWidthsA(dc, c, c, &abc))
-        ok((float)abc.abcB == abcf.abcfB, "%s: mismatched widths %d/%.8e\n",
-                lf->lfFaceName, abc.abcB, abcf.abcfB);
+    if (!strcmp(lf->lfFaceName, "Noto Color Emoji"))
+        skip("broken Noto Color Emoji font");
+    else if (GetCharABCWidthsA(dc, c, c, &abc))
+        ok((float)abc.abcB == abcf.abcfB, "%s: mismatched widths %d/%.8e\n", lf->lfFaceName, abc.abcB, abcf.abcfB);
 
     ReleaseDC(NULL, dc);
     DeleteObject(font);

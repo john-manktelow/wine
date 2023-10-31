@@ -421,7 +421,7 @@ GpStatus WINGDIPAPI GdipAddPathClosedCurve(GpPath *path, GDIPCONST GpPointF *poi
 {
     TRACE("(%p, %p, %d)\n", path, points, count);
 
-    return GdipAddPathClosedCurve2(path, points, count, 1.0);
+    return GdipAddPathClosedCurve2(path, points, count, 0.5);
 }
 
 GpStatus WINGDIPAPI GdipAddPathClosedCurveI(GpPath *path, GDIPCONST GpPoint *points,
@@ -429,7 +429,7 @@ GpStatus WINGDIPAPI GdipAddPathClosedCurveI(GpPath *path, GDIPCONST GpPoint *poi
 {
     TRACE("(%p, %p, %d)\n", path, points, count);
 
-    return GdipAddPathClosedCurve2I(path, points, count, 1.0);
+    return GdipAddPathClosedCurve2I(path, points, count, 0.5);
 }
 
 GpStatus WINGDIPAPI GdipAddPathClosedCurve2(GpPath *path, GDIPCONST GpPointF *points,
@@ -537,7 +537,7 @@ GpStatus WINGDIPAPI GdipAddPathCurve(GpPath *path, GDIPCONST GpPointF *points, I
     if(!path || !points || count <= 1)
         return InvalidParameter;
 
-    return GdipAddPathCurve2(path, points, count, 1.0);
+    return GdipAddPathCurve2(path, points, count, 0.5);
 }
 
 GpStatus WINGDIPAPI GdipAddPathCurveI(GpPath *path, GDIPCONST GpPoint *points, INT count)
@@ -547,7 +547,7 @@ GpStatus WINGDIPAPI GdipAddPathCurveI(GpPath *path, GDIPCONST GpPoint *points, I
     if(!path || !points || count <= 1)
         return InvalidParameter;
 
-    return GdipAddPathCurve2I(path, points, count, 1.0);
+    return GdipAddPathCurve2I(path, points, count, 0.5);
 }
 
 GpStatus WINGDIPAPI GdipAddPathCurve2(GpPath *path, GDIPCONST GpPointF *points, INT count,
@@ -1728,9 +1728,10 @@ GpStatus WINGDIPAPI GdipIsOutlineVisiblePathPoint(GpPath* path, REAL x, REAL y,
 {
     GpStatus stat;
     GpPath *wide_path;
+    GpPointF pt = {x, y};
     GpMatrix *transform = NULL;
 
-    TRACE("(%p,%0.2f,%0.2f,%p,%p,%p)\n", path, x, y, pen, graphics, result);
+    TRACE("(%p, %0.2f, %0.2f, %p, %p, %p)\n", path, x, y, pen, graphics, result);
 
     if(!path || !pen)
         return InvalidParameter;
@@ -1747,22 +1748,15 @@ GpStatus WINGDIPAPI GdipIsOutlineVisiblePathPoint(GpPath* path, REAL x, REAL y,
         if (stat == Ok)
             stat = get_graphics_transform(graphics, CoordinateSpaceDevice,
                 CoordinateSpaceWorld, transform);
+        if (stat == Ok)
+            GdipTransformMatrixPoints(transform, &pt, 1);
     }
 
     if (stat == Ok)
-        stat = GdipWidenPath(wide_path, pen, transform, 1.0);
-
-    if (pen->unit == UnitPixel && graphics != NULL)
-    {
-        if (stat == Ok)
-            stat = GdipInvertMatrix(transform);
-
-        if (stat == Ok)
-            stat = GdipTransformPath(wide_path, transform);
-    }
+        stat = GdipWidenPath(wide_path, pen, transform, 0.25f);
 
     if (stat == Ok)
-        stat = GdipIsVisiblePathPoint(wide_path, x, y, graphics, result);
+        stat = GdipIsVisiblePathPoint(wide_path, pt.X, pt.Y, graphics, result);
 
     GdipDeleteMatrix(transform);
 
