@@ -720,9 +720,22 @@ TRACEHANDLE WINAPI OpenTraceA( PEVENT_TRACE_LOGFILEA logfile )
 /******************************************************************************
  * EnumerateTraceGuids [ADVAPI32.@]
  */
-ULONG WINAPI EnumerateTraceGuids(PTRACE_GUID_PROPERTIES *propertiesarray,
+ULONG DECLSPEC_IMPORT __stdcall EnumerateTraceGuids(PTRACE_GUID_PROPERTIES *propertiesarray,
                                  ULONG arraycount, PULONG guidcount)
 {
     FIXME("%p %ld %p: stub\n", propertiesarray, arraycount, guidcount);
-    return ERROR_INVALID_PARAMETER;
+    *guidcount = 0;
+    return ERROR_SUCCESS;
+    //return ERROR_INVALID_PARAMETER;
+}
+
+/******************************************************************************
+ * EnumerateTraceGuidsEx [ADVAPI32.@]
+ */
+ULONG WINAPI EnumerateTraceGuidsEx(TRACE_QUERY_INFO_CLASS traceQueryInfoClass, PVOID inBuffer, ULONG inBufferSize, PVOID outBuffer, ULONG outBufferSize, PULONG returnLength)
+{
+    FIXME("%d %p %ld %p %ld %p: stub\n", traceQueryInfoClass, inBuffer, inBufferSize, outBuffer, outBufferSize, returnLength);
+    outBufferSize = 0;
+    returnLength = 0;
+    return ERROR_SUCCESS;
 }
