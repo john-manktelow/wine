@@ -113,7 +113,11 @@ static const WELLKNOWNSID WellKnownSids[] =
     { WinMediumLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_MEDIUM_RID } } },
     { WinHighLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_HIGH_RID } } },
     { WinSystemLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_SYSTEM_RID } } },
-    { WinBuiltinAnyPackageSid, { SID_REVISION, 2, { SECURITY_APP_PACKAGE_AUTHORITY }, { SECURITY_APP_PACKAGE_BASE_RID, SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE } } },
+    { WinBuiltinAnyPackageSid, { SID_REVISION, 2, { SECURITY_APP_PACKAGE_AUTHORITY }, { SECURITY_APP_PACKAGE_BASE_RID, SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE } } },  
+    { HackDocDBGatewaySid, { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_LOCAL_RID} } },  
+    { HackDocDBMasterSid, { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_LOCAL_RID } } },  
+    { HackDocDBServerSid, { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_LOCAL_RID } } },  
+
 };
 
 /* these SIDs must be constructed as relative to some domain - only the RID is well-known */
@@ -435,6 +439,7 @@ BOOL WINAPI CreateWellKnownSid( WELL_KNOWN_SID_TYPE type, PSID domain, PSID sid,
     if (size == NULL || (domain && !IsValidSid(domain)))
     {
         SetLastError(ERROR_INVALID_PARAMETER);
+        TRACE("ERROR_INVALID_PARAMETER 1\n");
         return FALSE;
     }
 
@@ -447,11 +452,13 @@ BOOL WINAPI CreateWellKnownSid( WELL_KNOWN_SID_TYPE type, PSID domain, PSID sid,
             if (*size < length)
             {
                 *size = length;
+                TRACE("ERROR_INSUFFICIENT_BUFFER\n");
                 SetLastError(ERROR_INSUFFICIENT_BUFFER);
                 return FALSE;
             }
             if (!sid)
             {
+                TRACE("ERROR_INVALID_PARAMETER 2\n");
                 SetLastError(ERROR_INVALID_PARAMETER);
                 return FALSE;
             }
@@ -464,6 +471,7 @@ BOOL WINAPI CreateWellKnownSid( WELL_KNOWN_SID_TYPE type, PSID domain, PSID sid,
     if (domain == NULL || *GetSidSubAuthorityCount(domain) == SID_MAX_SUB_AUTHORITIES)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
+        TRACE("ERROR_INVALID_PARAMETER 3 domain: %p\n");
         return FALSE;
     }
 

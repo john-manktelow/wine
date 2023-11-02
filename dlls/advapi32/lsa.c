@@ -401,9 +401,17 @@ static BOOL lookup_name( LSA_UNICODE_STRING *name, SID *sid, DWORD *sid_size, WC
 {
     BOOL ret;
 
+    TRACE("Looking up %s\n", debugstr_us(name));
+
     ret = lookup_local_wellknown_name( name, sid, sid_size, domain, domain_size, use, handled );
+    TRACE("lookup_name ret from wellknown = %d\n", ret);
     if (!*handled)
+    {
         ret = lookup_local_user_name( name, sid, sid_size, domain, domain_size, use, handled );
+        TRACE("lookup_name ret from local = %d\n", ret);
+    }
+    
+    TRACE("lookup_name handled = %d\n", *handled);
 
     return ret;
 }
@@ -475,7 +483,7 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
     SID *sid;
 
     TRACE("(%p,0x%08lx,0x%08lx,%p,%p,%p)\n", policy, flags, count, names, domains, sids);
-
+ 
     mapped = 0;
     for (i = 0; i < count; i++)
     {
@@ -542,6 +550,8 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
         }
     }
     free(domain.Buffer);
+
+    TRACE("mapped: %d, count: %d, equal %d, sid use: %d", mapped, count, (mapped == count), use);
 
     if (mapped == count) return STATUS_SUCCESS;
     if (mapped > 0 && mapped < count) return STATUS_SOME_NOT_MAPPED;
