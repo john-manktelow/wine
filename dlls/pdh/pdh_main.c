@@ -1231,7 +1231,22 @@ PDH_STATUS WINAPI PdhEnumObjectItemsW(LPCWSTR szDataSource, LPCWSTR szMachineNam
          debugstr_w(szObjectName), mszCounterList, pcchCounterListLength, mszInstanceList,
          pcchInstanceListLength, dwDetailLevel, dwFlags);
 
-    return PDH_NOT_IMPLEMENTED;
+    if (mszCounterList == NULL)
+    {
+        *pcchCounterListLength = 1;
+        *pcchInstanceListLength = 0;
+        TRACE("returning 0x%lx\n", PDH_MORE_DATA);
+        return PDH_MORE_DATA;
+    }
+
+    *mszCounterList = 0;
+    *pcchCounterListLength = 1;
+    mszInstanceList = NULL;
+    *pcchCounterListLength = 0;
+
+
+    TRACE("returning 0x%lx\n", ERROR_SUCCESS);
+    return ERROR_SUCCESS;
 }
 
 /***********************************************************************
