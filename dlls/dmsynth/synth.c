@@ -565,6 +565,10 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
     }
 
     fluid_settings_setnum(This->fluid_settings, "synth.sample-rate", actual.dwSampleRate);
+    fluid_settings_setint(This->fluid_settings, "synth.reverb.active",
+            !!(actual.dwEffectFlags & DMUS_EFFECT_REVERB));
+    fluid_settings_setint(This->fluid_settings, "synth.chorus.active",
+            !!(actual.dwEffectFlags & DMUS_EFFECT_CHORUS));
     if (!(This->fluid_synth = new_fluid_synth(This->fluid_settings))) return E_OUTOFMEMORY;
     if ((id = fluid_synth_add_sfont(This->fluid_synth, This->fluid_sfont)) == FLUID_FAILED)
         WARN("Failed to add fluid_sfont to fluid_synth\n");
@@ -1080,6 +1084,9 @@ static HRESULT WINAPI synth_Render(IDirectMusicSynth8 *iface, short *buffer,
         case MIDI_PROGRAM_CHANGE:
             fluid_synth_program_change(This->fluid_synth, chan, event->midi[1]);
             break;
+        case MIDI_PITCH_BEND_CHANGE:
+            fluid_synth_pitch_bend(This->fluid_synth, chan, event->midi[1] | (event->midi[2] << 7));
+            break;
         default:
             FIXME("MIDI event not implemented: %#x %#x %#x\n", event->midi[0], event->midi[1], event->midi[2]);
             break;
@@ -1494,9 +1501,9 @@ static BOOL mod_from_connection(USHORT source, USHORT transform, UINT *fluid_sou
     return TRUE;
 }
 
-static BOOL add_mod_from_connection(fluid_voice_t *fluid_voice, const CONNECTION *conn,
-        UINT src1, UINT flags1, UINT src2, UINT flags2)
+static void add_mod_from_connection(fluid_voice_t *fluid_voice, const CONNECTION *conn)
 {
+    UINT src1 = FLUID_MOD_NONE, flags1 = 0, src2 = FLUID_MOD_NONE, flags2 = 0;
     fluid_mod_t *mod;
     UINT gen = -1;
     double value;
@@ -1517,15 +1524,20 @@ static BOOL add_mod_from_connection(fluid_voice_t *fluid_voice, const CONNECTION
 
     if (conn->usControl != CONN_SRC_NONE && gen != -1)
     {
-        src1 = src2;
-        flags1 = flags2;
-        src2 = 0;
-        flags2 = 0;
+        if (!mod_from_connection(conn->usControl, (conn->usTransform >> 4) & 0x3f, &src1, &flags1))
+            return;
+    }
+    else
+    {
+        if (!mod_from_connection(conn->usSource, (conn->usTransform >> 10) & 0x3f, &src1, &flags1))
+            return;
+        if (!mod_from_connection(conn->usControl, (conn->usTransform >> 4) & 0x3f, &src2, &flags2))
+            return;
     }
 
-    if (gen == -1 && !gen_from_connection(conn, &gen)) return FALSE;
+    if (gen == -1 && !gen_from_connection(conn, &gen)) return;
 
-    if (!(mod = new_fluid_mod())) return FALSE;
+    if (!(mod = new_fluid_mod())) return;
     fluid_mod_set_source1(mod, src1, flags1);
     fluid_mod_set_source2(mod, src2, flags2);
     fluid_mod_set_dest(mod, gen);
@@ -1541,8 +1553,6 @@ static BOOL add_mod_from_connection(fluid_voice_t *fluid_voice, const CONNECTION
     fluid_mod_set_amount(mod, value);
 
     fluid_voice_add_mod(fluid_voice, mod, FLUID_VOICE_OVERWRITE);
-
-    return TRUE;
 }
 
 static void add_voice_connections(fluid_voice_t *fluid_voice, const CONNECTIONLIST *list,
@@ -1552,18 +1562,11 @@ static void add_voice_connections(fluid_voice_t *fluid_voice, const CONNECTIONLI
 
     for (i = 0; i < list->cConnections; i++)
     {
-        UINT src1 = FLUID_MOD_NONE, flags1 = 0, src2 = FLUID_MOD_NONE, flags2 = 0;
         const CONNECTION *conn = connections + i;
 
         if (set_gen_from_connection(fluid_voice, conn)) continue;
 
-        if (!mod_from_connection(conn->usSource, (conn->usTransform >> 10) & 0x3f,
-                &src1, &flags1))
-            continue;
-        if (!mod_from_connection(conn->usControl, (conn->usControl >> 4) & 0x3f,
-                &src2, &flags2))
-            continue;
-        add_mod_from_connection(fluid_voice, conn, src1, flags1, src2, flags2);
+        add_mod_from_connection(fluid_voice, conn);
     }
 }
 
@@ -1772,8 +1775,11 @@ static int synth_preset_noteon(fluid_preset_t *fluid_preset, fluid_synth_t *flui
             else
                 FIXME("Unsupported loop type %lu\n", loop->ulType);
 
-            fluid_voice_gen_set(fluid_voice, GEN_STARTLOOPADDROFS, loop->ulStart);
-            fluid_voice_gen_set(fluid_voice, GEN_ENDLOOPADDROFS, loop->ulStart + loop->ulLength);
+            /* When copy_data is TRUE, fluid_sample_set_sound_data() adds
+             * 8-frame padding around the sample data. Offset the loop points
+             * to compensate for this. */
+            fluid_voice_gen_set(fluid_voice, GEN_STARTLOOPADDROFS, 8 + loop->ulStart);
+            fluid_voice_gen_set(fluid_voice, GEN_ENDLOOPADDROFS, 8 + loop->ulStart + loop->ulLength);
         }
         LIST_FOR_EACH_ENTRY(articulation, &instrument->articulations, struct articulation, entry)
             add_voice_connections(fluid_voice, &articulation->list, articulation->connections);

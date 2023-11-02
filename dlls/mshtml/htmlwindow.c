@@ -3977,19 +3977,16 @@ static void HTMLWindow_unlink(DispatchEx *dispex)
 
     if(This->image_factory) {
         HTMLImageElementFactory *image_factory = This->image_factory;
-        This->image_factory->window = NULL;
         This->image_factory = NULL;
         IHTMLImageElementFactory_Release(&image_factory->IHTMLImageElementFactory_iface);
     }
     if(This->option_factory) {
         HTMLOptionElementFactory *option_factory = This->option_factory;
-        This->option_factory->window = NULL;
         This->option_factory = NULL;
         IHTMLOptionElementFactory_Release(&option_factory->IHTMLOptionElementFactory_iface);
     }
     if(This->xhr_factory) {
         HTMLXMLHttpRequestFactory *xhr_factory = This->xhr_factory;
-        This->xhr_factory->window = NULL;
         This->xhr_factory = NULL;
         IHTMLXMLHttpRequestFactory_Release(&xhr_factory->IHTMLXMLHttpRequestFactory_iface);
     }
@@ -3997,20 +3994,17 @@ static void HTMLWindow_unlink(DispatchEx *dispex)
     unlink_ref(&This->screen);
     if(This->history) {
         OmHistory *history = This->history;
-        This->history->window = NULL;
         This->history = NULL;
         IOmHistory_Release(&history->IOmHistory_iface);
     }
     unlink_ref(&This->navigator);
     if(This->session_storage) {
         IHTMLStorage *session_storage = This->session_storage;
-        detach_html_storage(session_storage);
         This->session_storage = NULL;
         IHTMLStorage_Release(session_storage);
     }
     if(This->local_storage) {
         IHTMLStorage *local_storage = This->local_storage;
-        detach_html_storage(local_storage);
         This->local_storage = NULL;
         IHTMLStorage_Release(local_storage);
     }

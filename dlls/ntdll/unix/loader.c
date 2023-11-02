@@ -389,7 +389,6 @@ const char **dll_paths = NULL;
 const char **system_dll_paths = NULL;
 const char *user_name = NULL;
 SECTION_IMAGE_INFORMATION main_image_info = { NULL };
-static const IMAGE_EXPORT_DIRECTORY *ntdll_exports;
 
 /* adjust an array of pointers to make them into RVAs */
 static inline void fixup_rva_ptrs( void *array, BYTE *base, unsigned int count )
@@ -1569,8 +1568,6 @@ static const WCHAR *get_machine_wow64_dir( WORD machine )
     static const WCHAR system32[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',0};
     static const WCHAR syswow64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\',0};
     static const WCHAR sysarm32[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','3','2','\\',0};
-    static const WCHAR sysx8664[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','x','8','6','6','4','\\',0};
-    static const WCHAR sysarm64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','6','4','\\',0};
 
     if (machine == native_machine) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
 
@@ -1579,8 +1576,6 @@ static const WCHAR *get_machine_wow64_dir( WORD machine )
     case IMAGE_FILE_MACHINE_TARGET_HOST: return system32;
     case IMAGE_FILE_MACHINE_I386:        return syswow64;
     case IMAGE_FILE_MACHINE_ARMNT:       return sysarm32;
-    case IMAGE_FILE_MACHINE_AMD64:       return sysx8664;
-    case IMAGE_FILE_MACHINE_ARM64:       return sysarm64;
     default: return NULL;
     }
 }
@@ -1603,6 +1598,7 @@ BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
     for (i = 0; i < supported_machines_count; i++)
     {
         sysdir = get_machine_wow64_dir( supported_machines[i] );
+        if (!sysdir) continue;
         dirlen = wcslen( sysdir );
         if (len <= dirlen) continue;
         if (wcsnicmp( p, sysdir, dirlen )) continue;
@@ -1759,12 +1755,13 @@ static void load_ntdll_functions( HMODULE module )
 {
     void **p__wine_unix_call_dispatcher;
     unixlib_handle_t *p__wine_unixlib_handle;
+    const IMAGE_EXPORT_DIRECTORY *exports;
 
-    ntdll_exports = get_module_data_dir( module, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
-    assert( ntdll_exports );
+    exports = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_EXPORT, NULL );
+    assert( exports );
 
 #define GET_FUNC(name) \
-    if (!(p##name = (void *)find_named_export( module, ntdll_exports, #name ))) \
+    if (!(p##name = (void *)find_named_export( module, exports, #name ))) \
         ERR( "%s not found\n", #name )
 
     GET_FUNC( DbgUiRemoteBreakin );
@@ -1941,9 +1938,14 @@ static void load_wow64_ntdll( USHORT machine )
     void *module;
     unsigned int status;
     SIZE_T size;
-    WCHAR *path = malloc( sizeof("\\??\\C:\\windows\\system32\\ntdll.dll") * sizeof(WCHAR) );
+    const WCHAR *wow64_dir;
+    WCHAR *path;
 
-    wcscpy( path, get_machine_wow64_dir( machine ));
+    if (machine == current_machine) return;
+    if (!(wow64_dir = get_machine_wow64_dir( machine ))) return;
+
+    path = malloc( sizeof("\\??\\C:\\windows\\system32\\ntdll.dll") * sizeof(WCHAR) );
+    wcscpy( path, wow64_dir );
     wcscat( path, ntdllW );
     init_unicode_string( &nt_name, path );
     status = find_builtin_dll( &nt_name, &module, &size, &info, 0, 0, machine, 0, FALSE );
@@ -2004,7 +2006,7 @@ static void start_main_thread(void)
     init_thread_stack( teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
-    if (main_image_info.Machine != current_machine) load_wow64_ntdll( main_image_info.Machine );
+    load_wow64_ntdll( main_image_info.Machine );
     load_apiset_dll();
     ntdll_init_syscalls( &syscall_table, p__wine_syscall_dispatcher );
     server_init_process_done();
