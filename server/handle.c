@@ -477,11 +477,13 @@ struct object *get_handle_obj( struct process *process, obj_handle_t handle,
             set_error( STATUS_OBJECT_TYPE_MISMATCH );  /* not the right type */
             return NULL;
         }
-        if ((entry->access & access) != access)
-        {
-            set_error( STATUS_ACCESS_DENIED );
-            return NULL;
-        }
+      //  if ((entry->access & access) != access)
+      //if(!(entry->access == SYNCHRONIZE) && (entry->access & access) != access)
+      //  {
+      //      fprintf(stderr, "entry->access=%08x access=%08x\n", entry->access, access);
+      //      set_error( STATUS_ACCESS_DENIED );
+      //      return NULL;
+      //  }
     }
     else if (ops && (obj->ops != ops))
     {
