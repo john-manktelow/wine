@@ -566,6 +566,7 @@ struct test_track
     BOOL initialized;
     BOOL downloaded;
     BOOL playing;
+    BOOL test_play;
     HANDLE playing_event;
 };
 
@@ -659,6 +660,8 @@ static HRESULT WINAPI test_track_Play(IDirectMusicTrack *iface, void *state_data
 {
     struct test_track *This = impl_from_IDirectMusicTrack(iface);
 
+    if (!This->test_play) return S_OK;
+
     ok(state_data == &This->data, "got %p\n", state_data);
     ok(start_time == 50, "got %lu\n", start_time);
     ok(end_time == 100, "got %lu\n", end_time);
@@ -718,15 +721,15 @@ static HRESULT WINAPI test_track_IsParamSupported(IDirectMusicTrack *iface, REFG
 
 static HRESULT WINAPI test_track_AddNotificationType(IDirectMusicTrack *iface, REFGUID type)
 {
-    struct test_track *This = impl_from_IDirectMusicTrack(iface);
-    ok(0, "unexpected %s %p\n", __func__, This);
+    ok(IsEqualGUID(type, &GUID_NOTIFICATION_SEGMENT) || IsEqualGUID(type, &GUID_NOTIFICATION_PERFORMANCE),
+            "got %s\n", debugstr_guid(type));
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI test_track_RemoveNotificationType(IDirectMusicTrack *iface, REFGUID type)
 {
-    struct test_track *This = impl_from_IDirectMusicTrack(iface);
-    ok(0, "unexpected %s %p\n", __func__, This);
+    ok(IsEqualGUID(type, &GUID_NOTIFICATION_SEGMENT) || IsEqualGUID(type, &GUID_NOTIFICATION_PERFORMANCE),
+            "got %s\n", debugstr_guid(type));
     return E_NOTIMPL;
 }
 
@@ -755,7 +758,7 @@ static const IDirectMusicTrackVtbl test_track_vtbl =
     test_track_Clone,
 };
 
-static HRESULT test_track_create(IDirectMusicTrack **ret_iface)
+static HRESULT test_track_create(IDirectMusicTrack **ret_iface, BOOL test_play)
 {
     struct test_track *track;
 
@@ -763,6 +766,7 @@ static HRESULT test_track_create(IDirectMusicTrack **ret_iface)
     if (!(track = calloc(1, sizeof(*track)))) return E_OUTOFMEMORY;
     track->IDirectMusicTrack_iface.lpVtbl = &test_track_vtbl;
     track->ref = 1;
+    track->test_play = test_play;
 
     track->playing_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     ok(!!track->playing_event, "CreateEventW failed, error %lu\n", GetLastError());
@@ -3007,12 +3011,50 @@ static void test_performance_pmsg(void)
     IDirectMusicTool_Release(tool);
 }
 
-#define check_dmus_notification_pmsg(a, b, c) check_dmus_notification_pmsg_(__LINE__, a, b, c)
-static void check_dmus_notification_pmsg_(int line, DMUS_NOTIFICATION_PMSG *msg,
-        const GUID *type, DWORD option)
+#define check_dmus_dirty_pmsg(a, b) check_dmus_dirty_pmsg_(__LINE__, a, b)
+static void check_dmus_dirty_pmsg_(int line, DMUS_PMSG *msg, MUSIC_TIME music_time)
 {
-    ok_(__FILE__, line)(msg->dwType == DMUS_PMSGT_NOTIFICATION,
-            "got dwType %#lx\n", msg->dwType);
+    ok_(__FILE__, line)(msg->dwSize == sizeof(*msg), "got dwSize %#lx\n", msg->dwSize);
+    ok_(__FILE__, line)(abs(msg->mtTime - music_time) <= 100, "got mtTime %ld\n", msg->mtTime);
+    ok_(__FILE__, line)(msg->dwFlags == (DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_REFTIME | DMUS_PMSGF_TOOL_IMMEDIATE),
+            "got dwFlags %#lx\n", msg->dwFlags);
+    ok_(__FILE__, line)(msg->dwPChannel == 0, "got dwPChannel %#lx\n", msg->dwPChannel);
+    ok_(__FILE__, line)(msg->dwVirtualTrackID == 0, "got dwVirtualTrackID %#lx\n", msg->dwVirtualTrackID);
+    ok_(__FILE__, line)(msg->pTool != 0, "got pTool %p\n", msg->pTool);
+    ok_(__FILE__, line)(msg->pGraph != 0, "got pGraph %p\n", msg->pGraph);
+    ok_(__FILE__, line)(msg->dwType == DMUS_PMSGT_DIRTY, "got dwType %#lx\n", msg->dwType);
+    ok_(__FILE__, line)(msg->dwVoiceID == 0, "got dwVoiceID %#lx\n", msg->dwVoiceID);
+    todo_wine ok_(__FILE__, line)(msg->dwGroupID == -1, "got dwGroupID %#lx\n", msg->dwGroupID);
+    ok_(__FILE__, line)(msg->punkUser == 0, "got punkUser %p\n", msg->punkUser);
+}
+
+#define check_dmus_notification_pmsg(a, b, c, d, e, f) check_dmus_notification_pmsg_(__LINE__, a, b, c, d, e, f)
+static void check_dmus_notification_pmsg_(int line, DMUS_NOTIFICATION_PMSG *msg, MUSIC_TIME music_time, DWORD flags,
+        const GUID *type, DWORD option, void *user)
+{
+    ok_(__FILE__, line)(msg->dwSize == sizeof(*msg), "got dwSize %#lx\n", msg->dwSize);
+    ok_(__FILE__, line)(msg->rtTime > 0, "got rtTime %I64d\n", msg->rtTime);
+    ok_(__FILE__, line)(abs(msg->mtTime - music_time) <= 100, "got mtTime %ld\n", msg->mtTime);
+    todo_wine_if(flags == DMUS_PMSGF_TOOL_ATTIME)
+    ok_(__FILE__, line)(msg->dwFlags == (DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_REFTIME | flags),
+            "got dwFlags %#lx\n", msg->dwFlags);
+    ok_(__FILE__, line)(msg->dwPChannel == 0, "got dwPChannel %#lx\n", msg->dwPChannel);
+    ok_(__FILE__, line)(msg->dwVirtualTrackID == 0, "got dwVirtualTrackID %#lx\n", msg->dwVirtualTrackID);
+    if (flags == DMUS_PMSGF_TOOL_ATTIME)
+    {
+        todo_wine ok_(__FILE__, line)(msg->pTool == 0, "got pTool %p\n", msg->pTool);
+        ok_(__FILE__, line)(msg->pGraph == 0, "got pGraph %p\n", msg->pGraph);
+    }
+    else
+    {
+        ok_(__FILE__, line)(msg->pTool != 0, "got pTool %p\n", msg->pTool);
+        ok_(__FILE__, line)(msg->pGraph != 0, "got pGraph %p\n", msg->pGraph);
+    }
+    ok_(__FILE__, line)(msg->dwType == DMUS_PMSGT_NOTIFICATION, "got dwType %#lx\n", msg->dwType);
+    ok_(__FILE__, line)(msg->dwVoiceID == 0, "got dwVoiceID %#lx\n", msg->dwVoiceID);
+    todo_wine ok_(__FILE__, line)(msg->dwGroupID == -1, "got dwGroupID %#lx\n", msg->dwGroupID);
+    ok_(__FILE__, line)(msg->punkUser == (IUnknown *)user, "got punkUser %p\n", msg->punkUser);
+
     ok_(__FILE__, line)(IsEqualGUID(&msg->guidNotificationType, type),
             "got guidNotificationType %s\n", debugstr_guid(&msg->guidNotificationType));
     ok_(__FILE__, line)(msg->dwNotificationOption == option,
@@ -3038,8 +3080,11 @@ static void test_notification_pmsg(void)
         DMUS_PMSGT_WAVE,
     };
     IDirectMusicPerformance *performance;
+    IDirectMusicSegmentState *state;
     DMUS_NOTIFICATION_PMSG *notif;
+    MUSIC_TIME music_time, length;
     IDirectMusicSegment *segment;
+    IDirectMusicTrack *track;
     IDirectMusicGraph *graph;
     IDirectMusicTool *tool;
     DMUS_PMSG *msg;
@@ -3070,6 +3115,21 @@ static void test_notification_pmsg(void)
             &IID_IDirectMusicSegment, (void **)&segment);
     ok(hr == S_OK, "got %#lx\n", hr);
 
+
+    /* native needs a track or the segment will end immediately */
+
+    hr = test_track_create(&track, FALSE);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicSegment_InsertTrack(segment, track, 1);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    IDirectMusicTrack_Release(track);
+
+    /* native sends dirty / notification by batch of 1s, shorter length
+     * will cause all messages to be received immediately */
+    length = 10005870 / 6510;
+    hr = IDirectMusicSegment_SetLength(segment, length);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
     hr = IDirectMusicSegment8_Download((IDirectMusicSegment8 *)segment, (IUnknown *)performance);
     ok(hr == S_OK, "got %#lx\n", hr);
     hr = IDirectMusicSegment8_Unload((IDirectMusicSegment8 *)segment, (IUnknown *)performance);
@@ -3077,16 +3137,20 @@ static void test_notification_pmsg(void)
 
     hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, NULL);
     ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_GetTime(performance, NULL, &music_time);
+    ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, &msg);
+    ret = test_tool_wait_message(tool, 50, &msg);
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %#lx\n", msg->dwType);
+    check_dmus_dirty_pmsg(msg, music_time);
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
+    ret = test_tool_wait_message(tool, 50, &msg);
+    ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
     ret = test_tool_wait_message(tool, 500, &msg);
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %#lx\n", msg->dwType);
+    check_dmus_dirty_pmsg(msg, music_time + length);
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
@@ -3104,95 +3168,112 @@ static void test_notification_pmsg(void)
     hr = IDirectMusicPerformance_AddNotificationType(performance, &GUID_NOTIFICATION_SEGMENT);
     ok(hr == S_FALSE, "got %#lx\n", hr);
 
-    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, NULL);
+    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, &state);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_GetTime(performance, NULL, &music_time);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
+    ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTARTED);
+    check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_PERFORMANCE,
+            DMUS_NOTIFICATION_MUSICSTARTED, NULL);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
+    ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGSTART);
+    check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGSTART, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, &msg);
+    ret = test_tool_wait_message(tool, 50, &msg);
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %#lx\n", msg->dwType);
+    check_dmus_dirty_pmsg(msg, music_time);
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND);
+    check_dmus_notification_pmsg(notif, music_time + length - 1450, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGALMOSTEND, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
+    ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND);
+    check_dmus_notification_pmsg(notif, music_time + length, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGEND, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, &msg);
+    ret = test_tool_wait_message(tool, 50, &msg);
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %#lx\n", msg->dwType);
+    check_dmus_dirty_pmsg(msg, music_time + length);
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
+    ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTOPPED);
+    check_dmus_notification_pmsg(notif, music_time + length, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_PERFORMANCE,
+            DMUS_NOTIFICATION_MUSICSTOPPED, NULL);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 100, &msg);
+
+    /* wait enough time for notifications to be delivered */
+
+    ret = test_tool_wait_message(tool, 2000, &msg);
     ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
     ok(!msg, "got %p\n", msg);
-
-    hr = IDirectMusicPerformance_RemoveNotificationType(performance, &GUID_NOTIFICATION_PERFORMANCE);
-    ok(hr == S_OK, "got %#lx\n", hr);
-    hr = IDirectMusicPerformance_RemoveNotificationType(performance, &GUID_NOTIFICATION_SEGMENT);
-    ok(hr == S_OK, "got %#lx\n", hr);
 
 
     /* notification messages are also queued for direct access */
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTARTED);
+    check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_ATTIME, &GUID_NOTIFICATION_PERFORMANCE,
+            DMUS_NOTIFICATION_MUSICSTARTED, NULL);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGSTART);
+    check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_ATTIME, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGSTART, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND);
+    check_dmus_notification_pmsg(notif, music_time + length - 1450, DMUS_PMSGF_TOOL_ATTIME, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGALMOSTEND, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND);
+    check_dmus_notification_pmsg(notif, music_time + length, DMUS_PMSGF_TOOL_ATTIME, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGEND, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTOPPED);
+    check_dmus_notification_pmsg(notif, music_time + length, DMUS_PMSGF_TOOL_ATTIME, &GUID_NOTIFICATION_PERFORMANCE,
+            DMUS_NOTIFICATION_MUSICSTOPPED, NULL);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
     ok(hr == S_FALSE, "got %#lx\n", hr);
+
+    IDirectMusicSegmentState_Release(state);
+
+    hr = IDirectMusicPerformance_RemoveNotificationType(performance, &GUID_NOTIFICATION_PERFORMANCE);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_RemoveNotificationType(performance, &GUID_NOTIFICATION_SEGMENT);
+    ok(hr == S_OK, "got %#lx\n", hr);
 
 
     /* RemoveNotificationType returns S_FALSE if already removed */
@@ -3205,19 +3286,35 @@ static void test_notification_pmsg(void)
 
     hr = IDirectMusicPerformance_AddNotificationType(performance, &GUID_NOTIFICATION_SEGMENT);
     ok(hr == S_OK, "got %#lx\n", hr);
-    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, NULL);
+    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, &state);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_GetTime(performance, NULL, &music_time);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&notif);
+    ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
-    check_dmus_notification_pmsg(notif, &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGSTART);
+    check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_SEGMENT,
+            DMUS_NOTIFICATION_SEGSTART, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = IDirectMusicPerformance_CloseDown(performance);
     ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_GetNotificationPMsg(performance, &notif);
+    ok(hr == S_FALSE, "got %#lx\n", hr);
     hr = IDirectMusicPerformance_RemoveNotificationType(performance, &GUID_NOTIFICATION_SEGMENT);
     ok(hr == S_FALSE, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 50, &msg);
+    ok(!ret, "got %#lx\n", ret);
+    check_dmus_dirty_pmsg(msg, music_time);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, &msg);
+    ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
+
+    IDirectMusicSegmentState_Release(state);
     IDirectMusicSegment_Release(segment);
 
 
@@ -3856,7 +3953,7 @@ static void test_segment_state(void)
 
     hr = test_tool_create(message_types, ARRAY_SIZE(message_types), &tool);
     ok(hr == S_OK, "got %#lx\n", hr);
-    hr = test_track_create(&track);
+    hr = test_track_create(&track, TRUE);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     hr = CoCreateInstance(&CLSID_DirectMusicPerformance, NULL, CLSCTX_INPROC_SERVER,

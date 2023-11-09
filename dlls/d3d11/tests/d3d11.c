@@ -6199,8 +6199,7 @@ static void test_pipeline_statistics_query(void)
         ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
         ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
         ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-        todo_wine_if (damavand)
-            ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+        /* AMD has nonzero GSInvocations on Windows. */
         ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
         ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
         ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
@@ -6222,8 +6221,7 @@ static void test_pipeline_statistics_query(void)
     ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
     ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
     ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-    todo_wine_if (damavand)
-        ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+    /* AMD has nonzero GSInvocations on Windows. */
     ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
     ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
     ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
@@ -10960,7 +10958,7 @@ static void test_sample_c_lz(void)
         0x00000000, 0x0020800a, 0x00000000, 0x00000000, 0x05000036, 0x001020f2, 0x00000000, 0x00100006,
         0x00000000, 0x0100003e,
     };
-    static const float depth_values[] = {1.0f, 0.0f, 0.5f, 0.6f, 0.4f, 0.1f};
+    static const float depth_values[] = {0.0f, 1.0f, 0.5f, 0.6f, 0.4f, 0.1f};
     static const struct
     {
         unsigned int layer;
@@ -10969,8 +10967,8 @@ static void test_sample_c_lz(void)
     }
     tests[] =
     {
-        {0, 0.5f, 0.0f},
-        {1, 0.5f, 1.0f},
+        {0, 0.5f, 1.0f},
+        {1, 0.5f, 0.0f},
         {2, 0.5f, 0.0f},
         {3, 0.5f, 0.0f},
         {4, 0.5f, 1.0f},
@@ -10983,8 +10981,8 @@ static void test_sample_c_lz(void)
         {4, 0.0f, 0.0f},
         {5, 0.0f, 0.0f},
 
-        {0, 1.0f, 0.0f},
-        {1, 1.0f, 1.0f},
+        {0, 1.0f, 1.0f},
+        {1, 1.0f, 0.0f},
         {2, 1.0f, 1.0f},
         {3, 1.0f, 1.0f},
         {4, 1.0f, 1.0f},
@@ -13479,9 +13477,9 @@ static void test_instanced_draw(void)
         {"color",    0, DXGI_FORMAT_R8_UNORM,           1, D3D11_APPEND_ALIGNED_ELEMENT,
                 D3D11_INPUT_PER_INSTANCE_DATA, 1},
         {"color",    1, DXGI_FORMAT_R8_UNORM,           2, D3D11_APPEND_ALIGNED_ELEMENT,
-                D3D10_INPUT_PER_INSTANCE_DATA, 0},
+                D3D11_INPUT_PER_INSTANCE_DATA, 0},
         {"color",    2, DXGI_FORMAT_R8_UNORM,           3, D3D11_APPEND_ALIGNED_ELEMENT,
-                D3D10_INPUT_PER_INSTANCE_DATA, 2},
+                D3D11_INPUT_PER_INSTANCE_DATA, 2},
         {"v_offset", 0, DXGI_FORMAT_R32_FLOAT,          1, D3D11_APPEND_ALIGNED_ELEMENT,
                 D3D11_INPUT_PER_INSTANCE_DATA, 1},
     };
@@ -34831,7 +34829,7 @@ static void test_vertex_formats(void)
         {DXGI_FORMAT_R8_SNORM,              { 2.59842515e-01,  0.0,             0.0,             1.0}},
 
         {DXGI_FORMAT_B8G8R8A8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01,  5.29411793e-01}},
-        {DXGI_FORMAT_B8G8R8X8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01,  1.0}},
+        {DXGI_FORMAT_B8G8R8X8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01}},
     };
 
     if (!init_test_context(&test_context, NULL))
@@ -34875,9 +34873,12 @@ static void test_vertex_formats(void)
         };
 
         static const unsigned int stride = sizeof(*quad);
+        const struct vec4 *expect = &tests[i].expect;
         static const unsigned int offset = 0;
         ID3D11InputLayout *input_layout;
+        struct resource_readback rb;
         unsigned int format_support;
+        struct vec4 value;
 
         hr = ID3D11Device_CheckFormatSupport(device, tests[i].format, &format_support);
         ok(hr == S_OK || hr == E_FAIL, "Got hr %#lx.\n", hr);
@@ -34900,8 +34901,15 @@ static void test_vertex_formats(void)
         ID3D11DeviceContext_PSSetShader(context, test_context.ps, NULL, 0);
         ID3D11DeviceContext_Draw(context, 4, 0);
 
-        todo_wine_if (damavand && tests[i].format == DXGI_FORMAT_B8G8R8X8_UNORM)
-            check_texture_vec4(rt, &tests[i].expect, 1);
+        get_texture_readback(rt, 0, &rb);
+        value = *get_readback_vec4(&rb, 0, 0);
+        /* AMD supports B8G8R8X8_UNORM but puts garbage in the w component. */
+        if (tests[i].format == DXGI_FORMAT_B8G8R8X8_UNORM)
+            value.w = 0.0f;
+        ok(compare_vec4(&value, expect, 1),
+                    "Got {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
+                    value.x, value.y, value.z, value.w, expect->x, expect->y, expect->z, expect->w);
+        release_resource_readback(&rb);
 
         ID3D11InputLayout_Release(input_layout);
 

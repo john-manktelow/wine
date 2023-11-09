@@ -1264,6 +1264,7 @@ enable_msscript_ocx
 enable_mssign32
 enable_mssip32
 enable_mstask
+enable_msttsengine
 enable_msv1_0
 enable_msvcirt
 enable_msvcm80
@@ -11004,6 +11005,39 @@ if eval test \"x\$"$as_ac_var"\" = x"yes"
 then :
   as_fn_append ${wine_arch}_EXTRACFLAGS " -Wno-pragma-pack"
 fi }
+    { as_ac_var=`printf "%s\n" "ac_cv_${wine_arch}_cflags_-Wmicrosoft-enum-forward-reference" | $as_tr_sh`
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether $CC supports -Wmicrosoft-enum-forward-reference" >&5
+printf %s "checking whether $CC supports -Wmicrosoft-enum-forward-reference... " >&6; }
+if eval test \${$as_ac_var+y}
+then :
+  printf %s "(cached) " >&6
+else $as_nop
+  ac_wine_try_cflags_saved=$CFLAGS
+ac_wine_try_cflags_saved_exeext=$ac_exeext
+CFLAGS="$CFLAGS -nostdlib -nodefaultlibs -Wmicrosoft-enum-forward-reference"
+ac_exeext=".exe"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+int __cdecl mainCRTStartup(void) { return 0; }
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  eval "$as_ac_var=yes"
+else $as_nop
+  eval "$as_ac_var=no"
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext
+CFLAGS=$ac_wine_try_cflags_saved
+ac_exeext=$ac_wine_try_cflags_saved_exeext
+fi
+eval ac_res=\$$as_ac_var
+	       { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
+printf "%s\n" "$ac_res" >&6; }
+if eval test \"x\$"$as_ac_var"\" = x"yes"
+then :
+  as_fn_append ${wine_arch}_EXTRACFLAGS " -Wno-microsoft-enum-forward-reference"
+fi }
     { as_ac_var=`printf "%s\n" "ac_cv_${wine_arch}_cflags_-Wshift-overflow=2" | $as_tr_sh`
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether $CC supports -Wshift-overflow=2" >&5
 printf %s "checking whether $CC supports -Wshift-overflow=2... " >&6; }
@@ -18622,6 +18656,34 @@ if test "x$ac_cv_cflags__fcf_protection_none" = xyes
 then :
   EXTRACFLAGS="$EXTRACFLAGS -fcf-protection=none"
 fi
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether the compiler supports -fvisibility=hidden" >&5
+printf %s "checking whether the compiler supports -fvisibility=hidden... " >&6; }
+if test ${ac_cv_cflags__fvisibility_hidden+y}
+then :
+  printf %s "(cached) " >&6
+else $as_nop
+  ac_wine_try_cflags_saved=$CFLAGS
+CFLAGS="$CFLAGS -fvisibility=hidden"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+int main(int argc, char **argv) { return 0; }
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_cflags__fvisibility_hidden=yes
+else $as_nop
+  ac_cv_cflags__fvisibility_hidden=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext
+CFLAGS=$ac_wine_try_cflags_saved
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_cflags__fvisibility_hidden" >&5
+printf "%s\n" "$ac_cv_cflags__fvisibility_hidden" >&6; }
+if test "x$ac_cv_cflags__fvisibility_hidden" = xyes
+then :
+  EXTRACFLAGS="$EXTRACFLAGS -fvisibility=hidden"
+fi
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether the compiler supports -fno-stack-protector" >&5
 printf %s "checking whether the compiler supports -fno-stack-protector... " >&6; }
 if test ${ac_cv_cflags__fno_stack_protector+y}
@@ -19325,34 +19387,6 @@ printf "%s\n" "$ac_cv_cflags__fshort_wchar" >&6; }
 if test "x$ac_cv_cflags__fshort_wchar" = xyes
 then :
   MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"
-fi
-       { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether the compiler supports -fvisibility=hidden" >&5
-printf %s "checking whether the compiler supports -fvisibility=hidden... " >&6; }
-if test ${ac_cv_cflags__fvisibility_hidden+y}
-then :
-  printf %s "(cached) " >&6
-else $as_nop
-  ac_wine_try_cflags_saved=$CFLAGS
-CFLAGS="$CFLAGS -fvisibility=hidden"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-int main(int argc, char **argv) { return 0; }
-_ACEOF
-if ac_fn_c_try_link "$LINENO"
-then :
-  ac_cv_cflags__fvisibility_hidden=yes
-else $as_nop
-  ac_cv_cflags__fvisibility_hidden=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.beam \
-    conftest$ac_exeext conftest.$ac_ext
-CFLAGS=$ac_wine_try_cflags_saved
-fi
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_cflags__fvisibility_hidden" >&5
-printf "%s\n" "$ac_cv_cflags__fvisibility_hidden" >&6; }
-if test "x$ac_cv_cflags__fvisibility_hidden" = xyes
-then :
-  MSVCRTFLAGS="$MSVCRTFLAGS -fvisibility=hidden"
 fi
        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether the compiler supports -Wno-format" >&5
 printf %s "checking whether the compiler supports -Wno-format... " >&6; }
@@ -21577,6 +21611,7 @@ wine_fn_config_makefile dlls/mssign32 enable_mssign32
 wine_fn_config_makefile dlls/mssip32 enable_mssip32
 wine_fn_config_makefile dlls/mstask enable_mstask
 wine_fn_config_makefile dlls/mstask/tests enable_tests
+wine_fn_config_makefile dlls/msttsengine enable_msttsengine
 wine_fn_config_makefile dlls/msv1_0 enable_msv1_0
 wine_fn_config_makefile dlls/msvcirt enable_msvcirt
 wine_fn_config_makefile dlls/msvcirt/tests enable_tests
