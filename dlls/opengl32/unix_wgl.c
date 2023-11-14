@@ -198,13 +198,32 @@ static GLubyte *filter_extensions_list( const char *extensions, const char *disa
     return (GLubyte *)str;
 }
 
+static const char *parse_gl_version( const char *gl_version, int *major, int *minor )
+{
+    const char *ptr = gl_version;
+
+    *major = atoi( ptr );
+    if (*major <= 0)
+        ERR( "Invalid OpenGL major version %d.\n", *major );
+
+    while (isdigit( *ptr )) ++ptr;
+    if (*ptr++ != '.')
+        ERR( "Invalid OpenGL version string %s.\n", debugstr_a(gl_version) );
+
+    *minor = atoi( ptr );
+
+    while (isdigit( *ptr )) ++ptr;
+    return ptr;
+}
+
 static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
 {
     const struct opengl_funcs *funcs = teb->glTable;
+    const char *ext, *version;
     GLuint *disabled_index;
     GLint extensions_count;
     unsigned int i = 0, j;
-    const char *ext;
+    int major, minor;
 
     if (!funcs->ext.p_glGetStringi)
     {
@@ -212,6 +231,11 @@ static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
         *func_ptr = funcs->wgl.p_wglGetProcAddress( "glGetStringi" );
         if (!funcs->ext.p_glGetStringi) return NULL;
     }
+
+    version = (const char *)funcs->gl.p_glGetString( GL_VERSION );
+    parse_gl_version( version, &major, &minor );
+    if (major < 3)
+        return NULL;
 
     funcs->gl.p_glGetIntegerv( GL_NUM_EXTENSIONS, &extensions_count );
     disabled_index = malloc( extensions_count * sizeof(*disabled_index) );
@@ -411,24 +435,6 @@ static BOOL check_extension_support( TEB *teb, const char *extension, const char
     }
 
     return FALSE;
-}
-
-static const char *parse_gl_version( const char *gl_version, int *major, int *minor )
-{
-    const char *ptr = gl_version;
-
-    *major = atoi( ptr );
-    if (*major <= 0)
-        ERR( "Invalid OpenGL major version %d.\n", *major );
-
-    while (isdigit( *ptr )) ++ptr;
-    if (*ptr++ != '.')
-        ERR( "Invalid OpenGL version string %s.\n", debugstr_a(gl_version) );
-
-    *minor = atoi( ptr );
-
-    while (isdigit( *ptr )) ++ptr;
-    return ptr;
 }
 
 static void wrap_glGetIntegerv( TEB *teb, GLenum pname, GLint *data )
@@ -1155,34 +1161,34 @@ NTSTATUS process_detach( void *args )
 
 typedef ULONG PTR32;
 
-extern NTSTATUS ext_glClientWaitSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glDeleteSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glFenceSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetBufferPointerv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetBufferPointervARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetNamedBufferPointerv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetNamedBufferPointervEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetSynciv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glIsSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapBuffer( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glClientWaitSync( void *args );
+extern NTSTATUS ext_glDeleteSync( void *args );
+extern NTSTATUS ext_glFenceSync( void *args );
+extern NTSTATUS ext_glGetBufferPointerv( void *args );
+extern NTSTATUS ext_glGetBufferPointervARB( void *args );
+extern NTSTATUS ext_glGetNamedBufferPointerv( void *args );
+extern NTSTATUS ext_glGetNamedBufferPointervEXT( void *args );
+extern NTSTATUS ext_glGetSynciv( void *args );
+extern NTSTATUS ext_glIsSync( void *args );
+extern NTSTATUS ext_glMapBuffer( void *args );
 
-extern NTSTATUS ext_glUnmapBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapBufferARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapNamedBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapNamedBufferEXT( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glUnmapBuffer( void *args );
+extern NTSTATUS ext_glUnmapBufferARB( void *args );
+extern NTSTATUS ext_glUnmapNamedBuffer( void *args );
+extern NTSTATUS ext_glUnmapNamedBufferEXT( void *args );
 
-extern NTSTATUS ext_glMapBufferARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapBufferRange( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferRange( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferRangeEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glPathGlyphIndexRangeNV( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glWaitSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglGetExtensionsStringARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglGetExtensionsStringEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglQueryCurrentRendererStringWINE( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglQueryRendererStringWINE( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glMapBufferARB( void *args );
+extern NTSTATUS ext_glMapBufferRange( void *args );
+extern NTSTATUS ext_glMapNamedBuffer( void *args );
+extern NTSTATUS ext_glMapNamedBufferEXT( void *args );
+extern NTSTATUS ext_glMapNamedBufferRange( void *args );
+extern NTSTATUS ext_glMapNamedBufferRangeEXT( void *args );
+extern NTSTATUS ext_glPathGlyphIndexRangeNV( void *args );
+extern NTSTATUS ext_glWaitSync( void *args );
+extern NTSTATUS ext_wglGetExtensionsStringARB( void *args );
+extern NTSTATUS ext_wglGetExtensionsStringEXT( void *args );
+extern NTSTATUS ext_wglQueryCurrentRendererStringWINE( void *args );
+extern NTSTATUS ext_wglQueryRendererStringWINE( void *args );
 
 struct wow64_string_entry
 {

@@ -126,7 +126,7 @@ enum install_rules { INSTALL_LIB, INSTALL_DEV, INSTALL_TEST, NB_INSTALL_RULES };
 static const char *install_targets[NB_INSTALL_RULES] = { "install-lib", "install-dev", "install-test" };
 static const char *install_variables[NB_INSTALL_RULES] = { "INSTALL_LIB", "INSTALL_DEV", "INSTALL_TEST" };
 
-#define MAX_ARCHS 5
+#define MAX_ARCHS 6
 
 /* variables common to all makefiles */
 static struct strarray archs;
@@ -2867,6 +2867,7 @@ static void output_source_idl( struct makefile *make, struct incl_file *source, 
         output_filenames( defines );
         output_filenames( get_expanded_make_var_array( make, "EXTRAIDLFLAGS" ));
         output_filenames( get_expanded_file_local_var( make, obj, "EXTRAIDLFLAGS" ));
+        if (arch) output_filenames( get_expanded_arch_var_array( make, "EXTRAIDLFLAGS", arch ));
         output_filename( source->filename );
         output( "\n" );
         strarray_addall( &deps, arch_deps );

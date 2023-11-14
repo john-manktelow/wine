@@ -99,8 +99,8 @@
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)
-@ stub __iswcsym
-@ stub __iswcsymf
+@ cdecl __iswcsym(long)
+@ cdecl __iswcsymf(long)
 @ stdcall -arch=arm __jump_unwind(ptr ptr) ntdll.__jump_unwind
 @ cdecl -arch=i386 -norelay __libm_sse2_acos()
 @ cdecl -arch=i386 -norelay __libm_sse2_acosf()
@@ -609,7 +609,7 @@
 @ cdecl _mbctombb_l(long ptr)
 @ cdecl _mbctoupper(long)
 @ cdecl _mbctoupper_l(long ptr)
-@ stub _mblen_l
+@ cdecl _mblen_l(str long ptr)
 @ cdecl _mbsbtype(str long)
 @ cdecl _mbsbtype_l(str long ptr)
 @ cdecl _mbscat_s(ptr long str)
@@ -668,7 +668,7 @@
 @ cdecl _mbsnccnt(str long)
 @ cdecl _mbsnccnt_l(str long ptr)
 @ cdecl _mbsncmp(str str long)
-@ stub _mbsncmp_l
+@ cdecl _mbsncmp_l(str str long ptr)
 @ stub _mbsncoll(str str long)
 @ stub _mbsncoll_l
 @ cdecl _mbsncpy(ptr str long)
@@ -690,13 +690,13 @@
 @ stub _mbsnset_s
 @ stub _mbsnset_s_l
 @ cdecl _mbspbrk(str str)
-@ stub _mbspbrk_l
+@ cdecl _mbspbrk_l(str str ptr)
 @ cdecl _mbsrchr(str long)
 @ cdecl _mbsrchr_l(str long ptr)
 @ cdecl _mbsrev(str)
-@ stub _mbsrev_l
+@ cdecl _mbsrev_l(str ptr)
 @ cdecl _mbsset(ptr long)
-@ stub _mbsset_l
+@ cdecl _mbsset_l(ptr long ptr)
 @ stub _mbsset_s
 @ stub _mbsset_s_l
 @ cdecl _mbsspn(str str)
@@ -1179,7 +1179,7 @@
 @ cdecl _o__mbctombb_l(long ptr) _mbctombb_l
 @ cdecl _o__mbctoupper(long) _mbctoupper
 @ cdecl _o__mbctoupper_l(long ptr) _mbctoupper_l
-@ stub _o__mblen_l
+@ cdecl _o__mblen_l(str long ptr) _mblen_l
 @ cdecl _o__mbsbtype(str long) _mbsbtype
 @ cdecl _o__mbsbtype_l(str long ptr) _mbsbtype_l
 @ cdecl _o__mbscat_s(ptr long str) _mbscat_s
@@ -1237,7 +1237,7 @@
 @ cdecl _o__mbsnccnt(str long) _mbsnccnt
 @ cdecl _o__mbsnccnt_l(str long ptr) _mbsnccnt_l
 @ cdecl _o__mbsncmp(str str long) _mbsncmp
-@ stub _o__mbsncmp_l
+@ cdecl _o__mbsncmp_l(str str long ptr) _mbsncmp_l
 @ stub _o__mbsncoll
 @ stub _o__mbsncoll_l
 @ cdecl _o__mbsncpy(ptr str long) _mbsncpy
@@ -1259,13 +1259,13 @@
 @ stub _o__mbsnset_s
 @ stub _o__mbsnset_s_l
 @ cdecl _o__mbspbrk(str str) _mbspbrk
-@ stub _o__mbspbrk_l
+@ cdecl _o__mbspbrk_l(str str ptr) _mbspbrk_l
 @ cdecl _o__mbsrchr(str long) _mbsrchr
 @ cdecl _o__mbsrchr_l(str long ptr) _mbsrchr_l
 @ cdecl _o__mbsrev(str) _mbsrev
-@ stub _o__mbsrev_l
+@ cdecl _o__mbsrev_l(str ptr) _mbsrev_l
 @ cdecl _o__mbsset(ptr long) _mbsset
-@ stub _o__mbsset_l
+@ cdecl _o__mbsset_l(ptr long ptr) _mbsset_l
 @ stub _o__mbsset_s
 @ stub _o__mbsset_s_l
 @ cdecl _o__mbsspn(str str) _mbsspn

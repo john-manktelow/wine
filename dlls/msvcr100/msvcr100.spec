@@ -598,8 +598,8 @@
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)
-@ stub __iswcsym
-@ stub __iswcsymf
+@ cdecl __iswcsym(long)
+@ cdecl __iswcsymf(long)
 # extern __lconv
 @ cdecl __lconv_init()
 @ cdecl -arch=i386 -norelay __libm_sse2_acos()
@@ -1094,7 +1094,7 @@
 @ cdecl _mbctoupper(long)
 @ cdecl _mbctoupper_l(long ptr)
 @ extern _mbctype MSVCRT_mbctype
-@ stub _mblen_l
+@ cdecl _mblen_l(str long ptr)
 @ cdecl _mbsbtype(str long)
 @ cdecl _mbsbtype_l(str long ptr)
 @ cdecl _mbscat_s(ptr long str)
@@ -1152,7 +1152,7 @@
 @ cdecl _mbsnccnt(str long)
 @ cdecl _mbsnccnt_l(str long ptr)
 @ cdecl _mbsncmp(str str long)
-@ stub _mbsncmp_l
+@ cdecl _mbsncmp_l(str str long ptr)
 @ stub _mbsncoll(str str long)
 @ stub _mbsncoll_l
 @ cdecl _mbsncpy(ptr str long)
@@ -1174,13 +1174,13 @@
 @ stub _mbsnset_s
 @ stub _mbsnset_s_l
 @ cdecl _mbspbrk(str str)
-@ stub _mbspbrk_l
+@ cdecl _mbspbrk_l(str str ptr)
 @ cdecl _mbsrchr(str long)
 @ cdecl _mbsrchr_l(str long ptr)
 @ cdecl _mbsrev(str)
-@ stub _mbsrev_l
+@ cdecl _mbsrev_l(str ptr)
 @ cdecl _mbsset(ptr long)
-@ stub _mbsset_l
+@ cdecl _mbsset_l(ptr long ptr)
 @ stub _mbsset_s
 @ stub _mbsset_s_l
 @ cdecl _mbsspn(str str)
