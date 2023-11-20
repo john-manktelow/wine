@@ -112,6 +112,7 @@ void*    hash_table_iter_up(struct hash_table_iter* hti);
 
 extern unsigned dbghelp_options;
 extern BOOL     dbghelp_opt_native;
+extern BOOL     dbghelp_opt_extension_api;
 extern BOOL     dbghelp_opt_real_path;
 extern BOOL     dbghelp_opt_source_actual_path;
 extern SYSTEM_INFO sysinfo;
@@ -396,15 +397,6 @@ struct symt_udt
     struct vector               vchildren;
 };
 
-enum module_type
-{
-    DMT_ELF,            /* a real ELF shared module */
-    DMT_PE,             /* a native or builtin PE module */
-    DMT_MACHO,          /* a real Mach-O shared module */
-    DMT_PDB,            /* .PDB file */
-    DMT_DBG,            /* .DBG file */
-};
-
 struct process;
 struct module;
 
@@ -447,14 +439,17 @@ struct module
     IMAGEHLP_MODULEW64          module;
     WCHAR                       modulename[64]; /* used for enumeration */
     struct module*              next;
-    enum module_type		type : 16;
-    unsigned short              is_virtual : 1;
+    enum dhext_module_type	type : 16;
+    unsigned short              is_virtual : 1,
+                                is_wine_builtin : 1,
+                                has_file_image : 1;
     struct cpu*                 cpu;
     DWORD64                     reloc_delta;
     WCHAR*                      real_path;
 
     /* specific information for debug types */
     struct module_format*       format_info[DFI_LAST];
+    unsigned                    debug_format_bitmask;
 
     /* memory allocation pool */
     struct pool                 pool;
@@ -723,7 +718,6 @@ extern BOOL         macho_read_wine_loader_dbg_info(struct process* pcs, ULONG_P
 void minidump_add_memory_block(struct dump_context* dc, ULONG64 base, ULONG size, ULONG rva);
 
 /* module.c */
-extern const WCHAR      S_ElfW[];
 extern const WCHAR      S_WineLoaderW[];
 extern const struct loader_ops no_loader_ops;
 extern const struct loader_ops empty_loader_ops;
@@ -744,7 +738,7 @@ extern struct module*
 extern BOOL         module_get_debug(struct module_pair*);
 extern struct module*
                     module_new(struct process* pcs, const WCHAR* name,
-                               enum module_type type, BOOL virtual,
+                               enum dhext_module_type type, BOOL builtin, BOOL virtual,
                                DWORD64 addr, DWORD64 size,
                                ULONG_PTR stamp, ULONG_PTR checksum, WORD machine);
 extern struct module*
@@ -755,6 +749,7 @@ extern BOOL         module_remove(struct process* pcs,
                                   struct module* module);
 extern void         module_set_module(struct module* module, const WCHAR* name);
 extern WCHAR*       get_wine_loader_name(struct process *pcs) __WINE_DEALLOC(HeapFree, 3) __WINE_MALLOC;
+extern BOOL         module_is_wine_host(const WCHAR* module_name, const WCHAR* ext);
 
 /* msc.c */
 extern BOOL         pe_load_debug_directory(const struct process* pcs,
@@ -775,7 +770,7 @@ extern DWORD pdb_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW*
 
 /* path.c */
 extern BOOL         path_find_symbol_file(const struct process* pcs, const struct module* module,
-                                          PCSTR full_path, enum module_type type, const GUID* guid, DWORD dw1, DWORD dw2,
+                                          PCSTR full_path, BOOL is_pdb, const GUID* guid, DWORD dw1, DWORD dw2,
                                           WCHAR *buffer, BOOL* is_unmatched);
 extern WCHAR *get_dos_file_name(const WCHAR *filename) __WINE_DEALLOC(HeapFree, 3) __WINE_MALLOC;
 extern BOOL         search_dll_path(const struct process* process, const WCHAR *name, WORD machine,
@@ -785,7 +780,7 @@ extern const WCHAR* file_name(const WCHAR* str);
 extern const char* file_nameA(const char* str);
 
 /* pe_module.c */
-extern BOOL         pe_load_nt_header(HANDLE hProc, DWORD64 base, IMAGE_NT_HEADERS* nth);
+extern BOOL         pe_load_nt_header(HANDLE hProc, DWORD64 base, IMAGE_NT_HEADERS* nth, BOOL* is_builtin);
 extern struct module*
                     pe_load_native_module(struct process* pcs, const WCHAR* name,
                                           HANDLE hFile, DWORD64 base, DWORD size);

@@ -149,6 +149,16 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         process_wayland.wp_viewporter =
             wl_registry_bind(registry, id, &wp_viewporter_interface, 1);
     }
+    else if (strcmp(interface, "wl_subcompositor") == 0)
+    {
+        process_wayland.wl_subcompositor =
+            wl_registry_bind(registry, id, &wl_subcompositor_interface, 1);
+    }
+    else if (strcmp(interface, "wp_viewporter") == 0)
+    {
+        process_wayland.wp_viewporter =
+            wl_registry_bind(registry, id, &wp_viewporter_interface, 1);
+    }
 }
 
 static void registry_handle_global_remove(void *data, struct wl_registry *registry,
@@ -247,6 +257,11 @@ BOOL wayland_process_init(void)
     if (!process_wayland.wl_shm)
     {
         ERR("Wayland compositor doesn't support wl_shm\n");
+        return FALSE;
+    }
+    if (!process_wayland.wl_subcompositor)
+    {
+        ERR("Wayland compositor doesn't support wl_subcompositor\n");
         return FALSE;
     }
 

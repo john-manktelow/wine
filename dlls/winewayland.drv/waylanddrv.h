@@ -111,6 +111,7 @@ struct wayland
     struct xdg_wm_base *xdg_wm_base;
     struct wl_shm *wl_shm;
     struct wp_viewporter *wp_viewporter;
+    struct wl_subcompositor *wl_subcompositor;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -158,9 +159,18 @@ struct wayland_surface_config
 struct wayland_window_config
 {
     RECT rect;
+    RECT client_rect;
     enum wayland_surface_config_state state;
     /* The scale (i.e., normalized dpi) the window is rendering at. */
     double scale;
+};
+
+struct wayland_client_surface
+{
+    LONG ref;
+    struct wl_surface *wl_surface;
+    struct wl_subsurface *wl_subsurface;
+    struct wp_viewport *wp_viewport;
 };
 
 struct wayland_surface
@@ -175,6 +185,7 @@ struct wayland_surface
     struct wayland_shm_buffer *latest_window_buffer;
     BOOL resizing;
     struct wayland_window_config window;
+    struct wayland_client_surface *client;
 };
 
 struct wayland_shm_buffer
@@ -226,6 +237,8 @@ void wayland_surface_coords_from_window(struct wayland_surface *surface,
 void wayland_surface_coords_to_window(struct wayland_surface *surface,
                                       double surface_x, double surface_y,
                                       int *window_x, int *window_y) DECLSPEC_HIDDEN;
+struct wayland_client_surface *wayland_surface_get_client(struct wayland_surface *surface) DECLSPEC_HIDDEN;
+BOOL wayland_client_surface_release(struct wayland_client_surface *client) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland SHM buffer
@@ -297,5 +310,6 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
 BOOL WAYLAND_WindowPosChanging(HWND hwnd, HWND insert_after, UINT swp_flags,
                                const RECT *window_rect, const RECT *client_rect,
                                RECT *visible_rect, struct window_surface **surface) DECLSPEC_HIDDEN;
+const struct vulkan_funcs *WAYLAND_wine_get_vulkan_driver(UINT version) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_WAYLANDDRV_H */
