@@ -530,6 +530,24 @@ static void test_errorinfo(void)
     IUnknown_Release(unk);
 }
 
+#define expect_initstring(a, b, c) _expect_initstring(__LINE__, a, b, c)
+static void _expect_initstring(int line, IDataInitialize *datainit, const WCHAR *initstring, const WCHAR *expected)
+{
+    IDBInitialize *dbinit = NULL;
+    WCHAR *result = NULL;
+    HRESULT hr;
+
+    hr = IDataInitialize_GetDataSource(datainit, NULL, CLSCTX_INPROC_SERVER, initstring,
+                                       &IID_IDBInitialize, (IUnknown**)&dbinit);
+    ok_(__FILE__, line)(hr == S_OK, "got %08lx\n", hr);
+    hr = IDataInitialize_GetInitializationString(datainit, (IUnknown*)dbinit, 0, &result);
+    ok_(__FILE__, line)(hr == S_OK, "got %08lx\n", hr);
+    ok_(__FILE__, line)(!lstrcmpW(expected, result), "expected %s, got %s\n",
+                        wine_dbgstr_w(expected), wine_dbgstr_w(result));
+    CoTaskMemFree(result);
+    IDBInitialize_Release(dbinit);
+}
+
 static void test_initializationstring(void)
 {
     static const WCHAR *initstring_default = L"Data Source=dummy;";
@@ -539,6 +557,20 @@ static void test_initializationstring(void)
     static const WCHAR *initstring_mode = L"Provider=MSDASQL.1;Data Source=dummy;Mode=invalid";
     static const WCHAR *initstring_mode2 = L"Provider=MSDASQL.1;Data Source=dummy;Mode=WriteRead";
     static const WCHAR *initstring_mode3 = L"Provider=MSDASQL.1;Data Source=dummy;Mode=ReadWRITE";
+    static const WCHAR *initstring_quote_semicolon = L"Provider=MSDASQL.1;"
+                                                     "Data Source=dummy;"
+                                                     "Extended Properties=\"ConnectTo=11.0;Cell Error Mode=TextValue;Optimize Response=3;\"";
+    static const WCHAR *initstring_duplicate = L"Provider=MSDASQL.1;"
+                                               "Data Source=dummy;"
+                                               "Data Source=dummy;";
+    static const WCHAR *initstring_skip_properties = L"Provider=MSDASQL.1;"
+                                                     "Data Source=dummy;"
+                                                     "Window Handle=0;"
+                                                     "Prompt=4;"
+                                                     "Connect Timeout=1000;"
+                                                     "General Timeout=1000;"
+                                                     "OLE DB Services=0;"
+                                                     "Locale Identifier=1033";
     IDataInitialize *datainit = NULL;
     IDBInitialize *dbinit;
     HRESULT hr;
@@ -563,8 +595,8 @@ static void test_initializationstring(void)
             if(hr == S_OK)
             {
                 trace("Init String: %s\n", wine_dbgstr_w(initstring));
-                todo_wine ok(!lstrcmpW(initstring_msdasql, initstring) ||
-                             !lstrcmpW(initstring_sqloledb, initstring), "got %s\n", wine_dbgstr_w(initstring));
+                ok(!lstrcmpW(initstring_msdasql, initstring) ||
+                   !lstrcmpW(initstring_sqloledb, initstring), "got %s\n", wine_dbgstr_w(initstring));
                 CoTaskMemFree(initstring);
             }
 
@@ -596,6 +628,15 @@ static void test_initializationstring(void)
         }
         else
             ok(dbinit == NULL, "got %p\n", dbinit);
+
+        /* Test quoting property values */
+        expect_initstring(datainit, initstring_quote_semicolon, initstring_quote_semicolon);
+
+        /* Test duplicate properties */
+        expect_initstring(datainit, initstring_duplicate, initstring_msdasql);
+
+        /* Test properties that should be skipped */
+        expect_initstring(datainit, initstring_skip_properties, initstring_msdasql);
 
         IDataInitialize_Release(datainit);
     }
