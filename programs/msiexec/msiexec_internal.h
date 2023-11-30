@@ -1,7 +1,7 @@
 /*
- * MAC driver definitions
+ * msiexec.exe internal definitions
  *
- * Copyright 2022 Jacek Caban for CodeWeavers
+ * Copyright 2023 Eric Pouech for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,19 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_MACDRV_DLL_H
-#define __WINE_MACDRV_DLL_H
+#include <corecrt.h>
 
-#include <stdarg.h>
-#include "windef.h"
-#include "winbase.h"
-#include "ntgdi.h"
-#include "unixlib.h"
-
-extern NTSTATUS WINAPI macdrv_dnd_query_drag(void *arg, ULONG size);
-extern NTSTATUS WINAPI macdrv_dnd_query_drop(void *arg, ULONG size);
-extern NTSTATUS WINAPI macdrv_dnd_query_exited(void *arg, ULONG size);
-
-extern HMODULE macdrv_module;
-
-#endif /* __WINE_MACDRV_DLL_H */
+#ifdef __WINE_CRT_PRINTF_ATTR
+extern void report_error(const char* msg, ...) __WINE_CRT_PRINTF_ATTR(1, 2);
+#else
+extern void report_error(const char* msg, ...);
+#endif
