@@ -455,6 +455,7 @@ static int update_desktop_cursor_window( struct desktop *desktop, user_handle_t 
 static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win, int x, int y )
 {
     struct thread_input *input;
+    user_handle_t capture;
     int updated;
 
     x = max( min( x, desktop->cursor.clip.right - 1 ), desktop->cursor.clip.left );
@@ -464,7 +465,7 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     desktop->cursor.y = y;
     desktop->cursor.last_change = get_tick_count();
 
-    if (!win && (input = desktop->foreground_input)) win = input->capture;
+    if ((input = desktop->foreground_input) && (capture = input->capture)) win = capture;
     if (!win || !is_window_visible( win ) || is_window_transparent( win ))
         win = shallow_window_from_point( desktop, x, y );
     if (update_desktop_cursor_window( desktop, win )) updated = 1;
@@ -1679,9 +1680,9 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
         break;
     case QS_MOUSEMOVE:
         prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
-        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
         /* fallthrough */
     case QS_MOUSEBUTTON:
+        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
         if (desktop->keystate[VK_LBUTTON] & 0x80)  msg->wparam |= MK_LBUTTON;
         if (desktop->keystate[VK_MBUTTON] & 0x80)  msg->wparam |= MK_MBUTTON;
         if (desktop->keystate[VK_RBUTTON] & 0x80)  msg->wparam |= MK_RBUTTON;
