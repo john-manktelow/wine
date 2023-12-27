@@ -429,26 +429,34 @@ static void queue_cursor_message( struct desktop *desktop, user_handle_t win, un
     queue_hardware_message( desktop, msg, 1 );
 }
 
+static struct thread_input *get_desktop_cursor_thread_input( struct desktop *desktop )
+{
+    struct thread_input *input = NULL;
+    struct thread *thread;
+
+    if ((thread = get_window_thread( desktop->cursor.win )))
+    {
+        if (thread->queue) input = thread->queue->input;
+        release_object( thread );
+    }
+
+    return input;
+}
+
 static int update_desktop_cursor_window( struct desktop *desktop, user_handle_t win )
 {
     int updated = win != desktop->cursor.win;
-    user_handle_t handle = desktop->cursor.handle;
+    struct thread_input *input;
     desktop->cursor.win = win;
-    if (updated)
+
+    if (updated && (input = get_desktop_cursor_thread_input( desktop )))
     {
-        struct thread *thread;
-
-        if ((thread = get_window_thread( win )))
-        {
-            struct thread_input *input = thread->queue->input;
-            if (input) handle = input->cursor_count < 0 ? 0 : input->cursor;
-            release_object( thread );
-        }
-
+        user_handle_t handle = input->cursor_count < 0 ? 0 : input->cursor;
         /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
         if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
         queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
     }
+
     return updated;
 }
 
@@ -470,13 +478,11 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     return updated;
 }
 
-static void update_desktop_cursor_handle( struct desktop *desktop, user_handle_t handle )
+static void update_desktop_cursor_handle( struct desktop *desktop, struct thread_input *input )
 {
-    int updated = desktop->cursor.handle != handle;
-    user_handle_t win = desktop->cursor.win;
-    desktop->cursor.handle = handle;
-    if (updated)
+    if (input == get_desktop_cursor_thread_input( desktop ))
     {
+        user_handle_t handle = input->cursor_count < 0 ? 0 : input->cursor, win = desktop->cursor.win;
         /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
         if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
         queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
@@ -2193,6 +2199,11 @@ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
     }
 }
 
+/* is this message an internal driver notification message */
+static inline BOOL is_internal_hardware_message( unsigned int message )
+{
+    return (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG);
+}
 
 /* find a hardware message for the given queue */
 static int get_hardware_message( struct thread *thread, unsigned int hw_id, user_handle_t filter_win,
@@ -2287,7 +2298,8 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
 
         data->hw_id = msg->unique_id;
         set_reply_data( msg->data, msg->data_size );
-        if (get_hardware_msg_bit( msg->msg ) == QS_RAWINPUT && (flags & PM_REMOVE))
+        if ((get_hardware_msg_bit( msg->msg ) == QS_RAWINPUT && (flags & PM_REMOVE)) ||
+            is_internal_hardware_message( msg->msg ))
             release_hardware_message( current->queue, data->hw_id );
         return 1;
     }
@@ -3400,10 +3412,7 @@ DECL_HANDLER(set_cursor)
     if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 0 );
 
     if (req->flags & (SET_CURSOR_HANDLE | SET_CURSOR_COUNT))
-    {
-        if (input->cursor_count < 0) update_desktop_cursor_handle( desktop, 0 );
-        else update_desktop_cursor_handle( desktop, input->cursor );
-    }
+        update_desktop_cursor_handle( desktop, input );
 
     reply->new_x       = desktop->cursor.x;
     reply->new_y       = desktop->cursor.y;
