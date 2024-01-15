@@ -109,9 +109,9 @@ static const AccountSid ACCOUNT_SIDS[] = {
     { WinBuiltinPerfMonitoringUsersSid, L"Performance Monitor Users", L"BUILTIN", SidTypeAlias },
     { WinBuiltinPerfLoggingUsersSid, L"Performance Log Users", L"BUILTIN", SidTypeAlias },
     { WinBuiltinAnyPackageSid, L"ALL APPLICATION PACKAGES", L"APPLICATION PACKAGE AUTHORITY", SidTypeWellKnownGroup,},
-    {HackDocDBGatewaySid, L"DocDBGatewayService", L"JOHNM-DESKX", SidTypeWellKnownGroup },
-    {HackDocDBMasterSid, L"DocDBMasterService", L"JOHNM-DESKX", SidTypeWellKnownGroup },
-    {HackDocDBServerSid, L"DocDBServerService", L"JOHNM-DESKX", SidTypeWellKnownGroup },
+    {HackDocDBGatewaySid, L"DocDBGatewayService", L"JOHNM-DESK", SidTypeWellKnownGroup },
+    {HackDocDBMasterSid, L"DocDBMasterService", L"JOHNM-DESK", SidTypeWellKnownGroup },
+    {HackDocDBServerSid, L"DocDBServerService", L"JOHNM-DESK", SidTypeWellKnownGroup },
     
 };
 
