@@ -2996,8 +2996,8 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
     case CMSG_INNER_CONTENT_TYPE_PARAM:
         if (msg->u.enveloped_data.data)
             ret = CRYPT_CopyParam(pvData, pcbData,
-             msg->u.enveloped_data.data->encryptedContentInfo.contentType.pbData,
-             msg->u.enveloped_data.data->encryptedContentInfo.contentType.cbData);
+             msg->u.enveloped_data.data->encryptedContentInfo.contentType,
+             sizeof(LPSTR));
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
@@ -3010,16 +3010,17 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
     case CMSG_CERT_COUNT_PARAM:
+        DWORD one = 1;
         if (msg->u.enveloped_data.data)
             ret = CRYPT_CopyParam(pvData, pcbData,
-             &msg->u.enveloped_data.data->cCertEncoded, sizeof(DWORD));
+             &one, sizeof(DWORD));
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
     case CMSG_UNPROTECTED_ATTR_PARAM:
+        CRYPT_ATTRIBUTES attr = { 0, NULL };
         if (msg->u.enveloped_data.data)
-            ret = CRYPT_CopyAttr(pvData, pcbData,
-             &msg->u.enveloped_data.data->unprotectedAttrs);
+            ret = CRYPT_CopyAttr(pvData, pcbData, &attr);
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
