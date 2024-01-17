@@ -2985,7 +2985,7 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         break;
     default:
         FIXME("unimplemented for %ld\n", dwParamType);
-        SetLastError(CRYPT_E_INVALID_MSG_TYPE);
+       // SetLastError(CRYPT_E_INVALID_MSG_TYPE);
     }
     return ret;
 }
