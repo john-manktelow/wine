@@ -2946,6 +2946,7 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
 {
     BOOL ret = FALSE;
 
+
     switch (dwParamType)
     {
     case CMSG_TYPE_PARAM:
@@ -2983,9 +2984,17 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
+    case CMSG_VERSION_PARAM:
+        if (msg->u.enveloped_data.data)
+            ret = CRYPT_CopyParam(pvData, pcbData,
+             &msg->u.enveloped_data.data->version, sizeof(DWORD));
+        else
+            SetLastError(CRYPT_E_INVALID_MSG_TYPE);
+        break;
+
     default:
         FIXME("unimplemented for %ld\n", dwParamType);
-       // SetLastError(CRYPT_E_INVALID_MSG_TYPE);
+        SetLastError(CRYPT_E_INVALID_MSG_TYPE);
     }
     return ret;
 }
