@@ -3003,9 +3003,12 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         break;
     case CMSG_ENVELOPE_ALGORITHM_PARAM:
         if (msg->u.enveloped_data.data)
-            ret = CRYPT_CopyAlgorithmId(pvData, 
-             &msg->u.enveloped_data.data->encryptedContentInfo.contentEncryptionAlgorithm,
-             pvData + sizeof(CRYPT_ALGORITHM_IDENTIFIER));
+             {
+                CRYPT_CopyAlgorithmId(pvData, 
+                    &msg->u.enveloped_data.data->encryptedContentInfo.contentEncryptionAlgorithm,
+                    pvData + sizeof(CRYPT_ALGORITHM_IDENTIFIER));
+                ret = TRUE;
+             }
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
