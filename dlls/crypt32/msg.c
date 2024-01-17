@@ -2968,6 +2968,7 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
+    case CMSG_CMS_RECIPIENT_INFO_PARAM:
     case CMSG_RECIPIENT_INFO_PARAM:
         if (msg->u.enveloped_data.data)
         {
