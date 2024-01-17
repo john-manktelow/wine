@@ -3003,7 +3003,7 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         break;
     case CMSG_ENVELOPE_ALGORITHM_PARAM:
         if (msg->u.enveloped_data.data)
-            ret = CRYPT_CopyParam(pvData, 
+            ret = CRYPT_CopyParam(pvData, pcbData,
                 &msg->u.enveloped_data.data->encryptedContentInfo.contentEncryptionAlgorithm,
                 sizeof(CRYPT_ALGORITHM_IDENTIFIER));            
         else
