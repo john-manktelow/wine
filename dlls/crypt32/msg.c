@@ -3010,10 +3010,10 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
     case CMSG_CERT_COUNT_PARAM:
-        DWORD one = 1;
+        DWORD zero = 0;
         if (msg->u.enveloped_data.data)
             ret = CRYPT_CopyParam(pvData, pcbData,
-             &one, sizeof(DWORD));
+             &zero, sizeof(DWORD));
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
