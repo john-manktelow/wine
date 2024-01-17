@@ -2960,6 +2960,7 @@ static BOOL CDecodeEnvelopedMsg_GetParam(CDecodeMsg *msg, DWORD dwParamType,
         else
             SetLastError(CRYPT_E_INVALID_MSG_TYPE);
         break;
+    case CMSG_CMS_RECIPIENT_COUNT_PARAM:
     case CMSG_RECIPIENT_COUNT_PARAM:
         if (msg->u.enveloped_data.data)
             ret = CRYPT_CopyParam(pvData, pcbData,
