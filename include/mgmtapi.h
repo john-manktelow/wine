@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 Stefan Leichter
+ * Copyright 2024 Alex Henrie
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,23 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
-#include "windef.h"
-#include "winbase.h"
-#include "mgmtapi.h"
-#include "wine/debug.h"
+#ifndef _INC_MGMTAPI
+#define _INC_MGMTAPI
 
-WINE_DEFAULT_DEBUG_CHANNEL(mgmtapi);
+typedef void *LPSNMP_MGR_SESSION;
 
-LPSNMP_MGR_SESSION WINAPI SnmpMgrOpen(char *hostname, char *community, int timeout, int retries)
-{
-    FIXME("stub: %s, %s, %d, %d\n", hostname, community, timeout, retries);
-    return NULL;
-}
-
-BOOL WINAPI SnmpMgrTrapListen(HANDLE *available)
-{
-    FIXME("stub: %p\n", available);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
-}
+#endif /* _INC_MGMTAPI */

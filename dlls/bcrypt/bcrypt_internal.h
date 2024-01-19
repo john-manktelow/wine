@@ -175,6 +175,7 @@ struct key_symmetric
 };
 
 #define KEY_FLAG_LEGACY_DSA_V2  0x00000001
+#define KEY_FLAG_FINALIZED      0x00000002
 
 struct key_asymmetric
 {
@@ -187,7 +188,7 @@ struct key
 {
     struct object hdr;
     enum alg_id   alg_id;
-    UINT64        private[2];  /* private data for backend */
+    UINT64        private[3];  /* private data for backend */
     union
     {
         struct key_symmetric s;
@@ -283,8 +284,10 @@ struct key_asymmetric_verify_params
     unsigned    flags;
 };
 
-#define KEY_EXPORT_FLAG_PUBLIC   0x00000001
-#define KEY_EXPORT_FLAG_RSA_FULL 0x00000002
+#define KEY_EXPORT_FLAG_PUBLIC        0x00000001
+#define KEY_EXPORT_FLAG_RSA_FULL      0x00000002
+#define KEY_EXPORT_FLAG_DH_PARAMETERS 0x00000004
+
 struct key_asymmetric_export_params
 {
     struct key  *key;
@@ -294,7 +297,9 @@ struct key_asymmetric_export_params
     ULONG       *ret_len;
 };
 
-#define KEY_IMPORT_FLAG_PUBLIC   0x00000001
+#define KEY_IMPORT_FLAG_PUBLIC        0x00000001
+#define KEY_IMPORT_FLAG_DH_PARAMETERS 0x00000002
+
 struct key_asymmetric_import_params
 {
     struct key  *key;

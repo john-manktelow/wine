@@ -2384,15 +2384,17 @@ static BOOL process_keyboard_message( MSG *msg, UINT hw_id, HWND hwnd_filter,
         }
     }
 
+    /* if remove is TRUE, remove message first before calling hooks to avoid recursive hook calls */
+    if (remove) accept_hardware_message( hw_id );
     if (call_hooks( WH_KEYBOARD, remove ? HC_ACTION : HC_NOREMOVE,
                     LOWORD(msg->wParam), msg->lParam, 0 ))
     {
+        /* if the message has not been removed, remove it */
+        if (!remove) accept_hardware_message( hw_id );
         /* skip this message */
         call_hooks( WH_CBT, HCBT_KEYSKIPPED, LOWORD(msg->wParam), msg->lParam, 0 );
-        accept_hardware_message( hw_id );
         return FALSE;
     }
-    if (remove) accept_hardware_message( hw_id );
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
 
     if (remove && msg->message == WM_KEYDOWN)
@@ -2568,8 +2570,8 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
         hook.wHitTestCode = hittest;
         hook.dwExtraInfo  = extra_info;
         hook.mouseData    = msg->wParam;
-        call_hooks( WH_CBT, HCBT_CLICKSKIPPED, message, (LPARAM)&hook, sizeof(hook) );
         accept_hardware_message( hw_id );
+        call_hooks( WH_CBT, HCBT_CLICKSKIPPED, message, (LPARAM)&hook, sizeof(hook) );
         return FALSE;
     }
 
@@ -2892,27 +2894,27 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
             }
             if (info.msg.message >= WM_DDE_FIRST && info.msg.message <= WM_DDE_LAST)
             {
-                struct unpack_dde_message_result result;
+                struct unpack_dde_message_result *result;
                 struct unpack_dde_message_params *params;
-                void *ret_ptr;
+                NTSTATUS status;
                 ULONG len;
-                BOOL ret;
 
                 len = FIELD_OFFSET( struct unpack_dde_message_params, data[size] );
                 if (!(params = malloc( len )))
                     continue;
-                params->result  = &result;
                 params->hwnd    = info.msg.hwnd;
                 params->message = info.msg.message;
                 params->wparam  = info.msg.wParam;
                 params->lparam  = info.msg.lParam;
                 if (size) memcpy( params->data, buffer, size );
-                ret = KeUserModeCallback( NtUserUnpackDDEMessage, params, len, &ret_ptr, &len );
-                if (len == sizeof(result)) result = *(struct unpack_dde_message_result *)ret_ptr;
+                status = KeUserModeCallback( NtUserUnpackDDEMessage, params, len, (void **)&result, &len );
                 free( params );
-                if (!ret) continue; /* ignore it */
-                info.msg.wParam = result.wparam;
-                info.msg.lParam = result.lparam;
+                if (status) continue; /* ignore it */
+                if (len == sizeof(*result))
+                {
+                    info.msg.wParam = result->wparam;
+                    info.msg.lParam = result->lparam;
+                }
             }
             *msg = info.msg;
             msg->pt = point_phys_to_win_dpi( info.msg.hwnd, info.msg.pt );
@@ -3005,12 +3007,15 @@ static inline LARGE_INTEGER *get_nt_timeout( LARGE_INTEGER *time, DWORD timeout 
 static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
 {
     LARGE_INTEGER time;
-    DWORD ret, lock;
+    DWORD ret, lock = 0;
     void *ret_ptr;
     ULONG ret_len;
 
     if (enable_thunk_lock)
-        lock = KeUserModeCallback( NtUserThunkLock, NULL, 0, &ret_ptr, &ret_len );
+    {
+        if (!KeUserModeCallback( NtUserThunkLock, NULL, 0, &ret_ptr, &ret_len ) && ret_len == sizeof(lock))
+            lock = *(DWORD *)ret_ptr;
+    }
 
     if (user_driver->pProcessEvents( mask )) ret = count ? count - 1 : 0;
     else if (count)

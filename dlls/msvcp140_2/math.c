@@ -1,5 +1,7 @@
 /*
- * Copyright 2012 Stefan Leichter
+ * Special math functions
+ *
+ * Copyright 2024 Alex Henrie
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,23 +18,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
-#include "windef.h"
-#include "winbase.h"
-#include "mgmtapi.h"
-#include "wine/debug.h"
+#include <math.h>
 
-WINE_DEFAULT_DEBUG_CHANNEL(mgmtapi);
-
-LPSNMP_MGR_SESSION WINAPI SnmpMgrOpen(char *hostname, char *community, int timeout, int retries)
+double __stdcall __std_smf_hypot3(double x, double y, double z)
 {
-    FIXME("stub: %s, %s, %d, %d\n", hostname, community, timeout, retries);
-    return NULL;
+    return hypot(hypot(x, y), z);
 }
 
-BOOL WINAPI SnmpMgrTrapListen(HANDLE *available)
+float __stdcall __std_smf_hypot3f(float x, float y, float z)
 {
-    FIXME("stub: %p\n", available);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    return hypotf(hypotf(x, y), z);
 }

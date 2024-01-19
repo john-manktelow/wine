@@ -3185,6 +3185,13 @@ static const struct exception
       1, 1, STATUS_SINGLE_STEP, 0 },
     { { 0xcd, 0x2c, 0xc3 },
       0, 2, STATUS_ASSERTION_FAILURE, 0 },
+    { { 0xb8, 0xb8, 0xb8, 0xb8, 0xb8,          /* mov $0xb8b8b8b8, %eax */
+        0xcd, 0x2d, 0xfa, 0xc3 },              /* int $0x2d; cli; ret */
+      7, 1, STATUS_BREAKPOINT, 1, { 0xb8b8b8b8 } },
+/* 40 */
+    { { 0xb8, 0x01, 0x00, 0x00, 0x00,          /* mov $0x01, %eax */
+        0xcd, 0x2d, 0xfa, 0xc3 },              /* int $0x2d; cli; ret */
+      8, 0, STATUS_SUCCESS, 0 },
 };
 
 static int got_exception;
@@ -3193,7 +3200,7 @@ static void run_exception_test_flags(void *handler, const void* context,
                                const void *code, unsigned int code_size,
                                DWORD access, DWORD handler_flags)
 {
-    unsigned char buf[8 + 6 + 8 + 8];
+    unsigned char buf[2 + 8 + 2 + 8 + 8];
     RUNTIME_FUNCTION runtime_func;
     UNWIND_INFO *unwind = (UNWIND_INFO *)buf;
     void (*func)(void) = code_mem;
@@ -3212,11 +3219,13 @@ static void run_exception_test_flags(void *handler, const void* context,
     *(ULONG *)&buf[4] = 0x1010;
     *(const void **)&buf[8] = context;
 
-    /* jmp near */
-    buf[16] = 0xff;
-    buf[17] = 0x25;
-    *(ULONG *)&buf[18] = 0;
-    *(void **)&buf[22] = handler;
+    /* movabs $<handler>, %rax */
+    buf[16] = 0x48;
+    buf[17] = 0xb8;
+    *(void **)&buf[18] = handler;
+    /* jmp *%rax */
+    buf[26] = 0xff;
+    buf[27] = 0xe0;
 
     memcpy((unsigned char *)code_mem + 0x1000, buf, sizeof(buf));
     memcpy(code_mem, code, code_size);
@@ -3437,8 +3446,13 @@ static DWORD WINAPI align_check_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
 #ifdef __GNUC__
     __asm__ volatile( "pushfq; andl $~0x40000,(%rsp); popfq" );
 #endif
-    ok (!(context->EFlags & 0x40000), "eflags has AC bit set\n");
+    ok (context->EFlags & 0x40000, "eflags has AC bit unset\n");
     got_exception++;
+    if (got_exception != 1)
+    {
+        ok(broken(1) /* win7 */, "exception should occur only once");
+        context->EFlags &= ~0x40000;
+    }
     return ExceptionContinueExecution;
 }
 
@@ -3579,12 +3593,10 @@ static void test_exceptions(void)
     ok(got_exception == 3, "expected 3 single step exceptions, got %d\n", got_exception);
 
     /* test alignment exceptions */
-    if (0)  /* broken on Windows */
-    {
     got_exception = 0;
     run_exception_test(align_check_handler, NULL, align_check_code, sizeof(align_check_code), 0);
-    ok(got_exception == 0, "got %d alignment faults, expected 0\n", got_exception);
-    }
+    todo_wine
+    ok(got_exception == 1 || broken(got_exception == 2) /* win7 */, "got %d alignment faults, expected 1\n", got_exception);
 
     /* test direction flag */
     got_exception = 0;

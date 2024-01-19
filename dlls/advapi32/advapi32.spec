@@ -827,7 +827,7 @@
 # @ stub TreeResetNamedSecurityInfoA
 @ stdcall TreeResetNamedSecurityInfoW(wstr long long ptr ptr ptr ptr long ptr long ptr)
 # @ stub TreeSetNamedSecurityInfoA
-# @ stub TreeSetNamedSecurityInfoW
+@ stdcall TreeSetNamedSecurityInfoW(wstr long long ptr ptr ptr ptr long ptr long ptr)
 # @ stub TrusteeAccessToObjectA
 # @ stub TrusteeAccessToObjectW
 # @ stub UninstallApplication
