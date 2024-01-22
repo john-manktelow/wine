@@ -236,6 +236,7 @@ struct wined3d_d3d_info
     uint32_t subpixel_viewport : 1;
     uint32_t fences : 1;
     uint32_t persistent_map : 1;
+    uint32_t gpu_push_constants : 1;
     enum wined3d_feature_level feature_level;
 
     DWORD multisample_draw_location;
@@ -4250,6 +4251,7 @@ struct wined3d_shader
     void *byte_code;
     unsigned int byte_code_size;
     BOOL load_local_constsF;
+    enum vkd3d_shader_source_type source_type;
     const struct wined3d_shader_frontend *frontend;
     void *frontend_data;
     void *backend_data;
