@@ -131,7 +131,6 @@ case $host in
       TARGETFLAGS="$TARGETFLAGS -m32"
       PKG_CONFIG_LIBDIR=${PKG_CONFIG_LIBDIR:-/usr/lib/i386-linux-gnu/pkgconfig:/usr/lib32/pkgconfig:/usr/lib/pkgconfig}
       export PKG_CONFIG_LIBDIR
-      with_unwind=${with_unwind:-no}
     else
       CC="$CC -m64"
       CXX="$CXX -m64"
@@ -176,9 +175,6 @@ case $host in
     esac
     CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
     TARGETFLAGS="$TARGETFLAGS -mfloat-abi=$float_abi"
-    ;;
-  i[[3456789]]86*)
-    with_unwind=${with_unwind:-no}
     ;;
 esac
 
@@ -837,6 +833,10 @@ AS_VAR_SET_IF([enable_archs],
          test $HOST_ARCH = unknown || cross_archs=$HOST_ARCH
      fi])
 
+saved_CC=$CC
+saved_CFLAGS=$CFLAGS
+saved_LDFLAGS=$LDFLAGS
+
 for wine_arch in $cross_archs
 do
     case "x$with_mingw" in
@@ -862,10 +862,6 @@ do
             AC_CHECK_PROGS(x86_64_CC,[$ac_prefix_list clang],[false])
             ;;
         esac])
-
-    saved_CC=$CC
-    saved_CFLAGS=$CFLAGS
-    saved_LDFLAGS=$LDFLAGS
 
     CFLAGS=${CROSSCFLAGS:-"-g -O2"}
     LDFLAGS=$CROSSLDFLAGS
@@ -928,9 +924,6 @@ do
         AS_VAR_SET_IF([enable_archs],
             [AC_MSG_ERROR([MinGW $wine_arch compiler not found.
 This is an error since --enable-archs=$wine_arch was requested.])])
-        CC=$saved_CC
-        CFLAGS=$saved_CFLAGS
-        LDFLAGS=$saved_LDFLAGS
         continue
     fi
 
@@ -952,9 +945,6 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     case "x$res" in
       x) AC_MSG_RESULT([none needed]) ;;
       xno) AC_MSG_RESULT([unsupported])
-           CC=$saved_CC
-           CFLAGS=$saved_CFLAGS
-           LDFLAGS=$saved_LDFLAGS
            AS_VAR_SET_IF([enable_archs],
                 [AC_MSG_ERROR([MinGW $wine_arch compiler supporting C99 not found.
 This is an error since --enable-archs=$wine_arch was requested.])])
@@ -1044,10 +1034,11 @@ This is an error since --enable-archs=$wine_arch was requested.])])
                                          [AS_VAR_APPEND([${wine_arch}_CFLAGS],[" -Wl,--build-id"])
                                           AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--build-id"])])
 
-    CC=$saved_CC
-    CFLAGS=$saved_CFLAGS
-    LDFLAGS=$saved_LDFLAGS
 done
+
+CC=$saved_CC
+CFLAGS=$saved_CFLAGS
+LDFLAGS=$saved_LDFLAGS
 
 if test $HOST_ARCH = aarch64
 then
@@ -1698,8 +1689,10 @@ WINE_NOTICE_WITH(udev,[test "x$UDEV_LIBS" = "x"],
                  [libudev ${notice_platform}development files not found, plug and play won't be supported.])
 
 dnl **** Check for libunwind ****
-if test "x$with_unwind" != xno
+if test $HOST_ARCH = x86_64
 then
+  if test "x$with_unwind" != xno
+  then
     WINE_PACKAGE_FLAGS(UNWIND,[libunwind],[-lunwind],,,
        [AC_CACHE_CHECK([for unw_step],wine_cv_have_unw_step,
            [AC_LINK_IFELSE([AC_LANG_PROGRAM([[#define UNW_LOCAL_ONLY
@@ -1725,12 +1718,13 @@ then
         then
             AC_DEFINE(HAVE_LIBUNWIND,1,[Define to 1 if you have the `unwind' library (-lunwind).])
         fi])
-fi
-case $host in
-  aarch64*|*-darwin*)
+  fi
+  case $host in
+  *-darwin*)
     WINE_NOTICE_WITH(unwind,[test "x$wine_cv_have_unw_step$wine_cv_have_libunwind_unw_step" = xnono],
                      [libunwind ${notice_platform}development files not found, stack unwinding won't work.]) ;;
-esac
+  esac
+fi
 
 dnl **** Check for libSDL2 ****
 if test "x$with_sdl" != "xno"

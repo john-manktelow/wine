@@ -1,7 +1,5 @@
 /*
- * Explorer private definitions
- *
- * Copyright 2006 Alexandre Julliard
+ * Copyright 2023 Fabian Maurer
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,14 +16,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_EXPLORER_PRIVATE_H
-#define __WINE_EXPLORER_PRIVATE_H
+import "inspectable.idl";
 
-extern void manage_desktop( WCHAR *arg );
-extern void initialize_systray( BOOL using_root, BOOL enable_shell, BOOL show_systray );
-extern void initialize_appbar(void);
-extern void handle_parent_notify( HWND hwnd, WPARAM wp );
-extern void do_startmenu( HWND owner );
-extern LRESULT menu_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-
-#endif  /* __WINE_EXPLORER_PRIVATE_H */
+[
+    uuid(75cf2c57-9195-4931-8332-f0b409e916af)
+]
+interface IInputPaneInterop : IInspectable
+{
+    HRESULT GetForWindow([in] HWND window, [in] REFIID riid, [out, retval, iid_is(riid)] void **inputpane);
+}

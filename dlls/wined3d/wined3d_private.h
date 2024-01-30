@@ -221,6 +221,7 @@ struct wined3d_d3d_info
     uint32_t shader_output_interpolation : 1;
     uint32_t frag_coord_correction : 1;
     uint32_t viewport_array_index_any_shader : 1;
+    uint32_t stencil_export : 1;
     uint32_t texture_npot : 1;
     uint32_t texture_npot_conditional : 1;
     uint32_t normalized_texrect : 1;
@@ -582,6 +583,7 @@ enum wined3d_shader_register_type
     WINED3DSPR_DEPTHOUTGE,
     WINED3DSPR_DEPTHOUTLE,
     WINED3DSPR_RASTERIZER,
+    WINED3DSPR_STENCILREF,
 };
 
 enum wined3d_data_type
@@ -1156,7 +1158,7 @@ struct wined3d_shader_reg_maps
     DWORD input_rel_addressing : 1;
     DWORD viewport_array : 1;
     DWORD sample_mask    : 1;
-    DWORD padding        : 14;
+    DWORD stencil_ref    : 1;
 
     DWORD rt_mask; /* Used render targets, 32 max. */
 
@@ -4336,6 +4338,7 @@ static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
         case WINED3DSPR_PRIMID:     /* primID */
         case WINED3DSPR_COVERAGE: /* vCoverage */
         case WINED3DSPR_SAMPLEMASK: /* oMask */
+        case WINED3DSPR_STENCILREF: /* oStencilRef */
             return TRUE;
 
         case WINED3DSPR_MISCTYPE:

@@ -307,6 +307,8 @@ typedef struct _CHPE_V2_CPU_AREA_INFO
 #define TEB_ACTIVE_FRAME_CONTEXT_FLAG_EXTENDED 0x00000001
 #define TEB_ACTIVE_FRAME_FLAG_EXTENDED         0x00000001
 
+typedef NTSTATUS (WINAPI *KERNEL_CALLBACK_PROC)(void *, ULONG); /* FIXME: not the correct name */
+
 /***********************************************************************
  * PEB data structure
  */
@@ -341,7 +343,7 @@ typedef struct _PEB
     ULONG                        ProcessCurrentlyThrottled : 1;
     ULONG                        ProcessImagesHotPatched : 1;
     ULONG                        ReservedBits0 : 24;
-    PVOID                        KernelCallbackTable;               /* 02c/058 */
+    KERNEL_CALLBACK_PROC        *KernelCallbackTable;               /* 02c/058 */
     ULONG                        Reserved;                          /* 030/060 */
     ULONG                        AtlThunkSListPtr32;                /* 034/064 */
     PVOID                        ApiSetMap;                         /* 038/068 */
@@ -3038,11 +3040,11 @@ typedef struct _DEBUG_BUFFER {
   PVOID  RemoteSectionBase;
   ULONG  SectionBaseDelta;
   HANDLE EventPairHandle;
-  ULONG  Unknown[2];
+  SIZE_T Unknown[2];
   HANDLE RemoteThreadHandle;
   ULONG  InfoClassMask;
-  ULONG  SizeOfInfo;
-  ULONG  AllocatedSize;
+  SIZE_T SizeOfInfo;
+  SIZE_T AllocatedSize;
   ULONG  SectionSize;
   PVOID  ModuleInformation;
   PVOID  BackTraceInformation;
@@ -3601,7 +3603,27 @@ typedef enum _SYSDBG_COMMAND {
   SysDbgReadMsr,
   SysDbgWriteMsr,
   SysDbgReadBusData,
-  SysDbgWriteBusData
+  SysDbgWriteBusData,
+  SysDbgCheckLowMemory,
+  SysDbgEnableKernelDebugger,
+  SysDbgDisableKernelDebugger,
+  SysDbgGetAutoKdEnable,
+  SysDbgSetAutoKdEnable,
+  SysDbgGetPrintBufferSize,
+  SysDbgSetPrintBufferSize,
+  SysDbgGetKdUmExceptionEnable,
+  SysDbgSetKdUmExceptionEnable,
+  SysDbgGetTriageDump,
+  SysDbgGetKdBlockEnable,
+  SysDbgSetKdBlockEnable,
+  SysDbgRegisterForUmBreakInfo,
+  SysDbgGetUmBreakPid,
+  SysDbgClearUmBreakPid,
+  SysDbgGetUmAttachPid,
+  SysDbgClearUmAttachPid,
+  SysDbgGetLiveKernelDump,
+  SysDbgKdPullRemoteFile,
+  SysDbgMaxInfoClass
 } SYSDBG_COMMAND, *PSYSDBG_COMMAND;
 
 typedef struct _CPTABLEINFO
