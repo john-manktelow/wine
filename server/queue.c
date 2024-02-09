@@ -35,6 +35,7 @@
 #include "winuser.h"
 #include "winternl.h"
 #include "ntuser.h"
+#include "hidusage.h"
 
 #include "handle.h"
 #include "file.h"
@@ -1637,13 +1638,13 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
     return win;
 }
 
-static struct rawinput_device *find_rawinput_device( struct process *process, unsigned short usage_page, unsigned short usage )
+static struct rawinput_device *find_rawinput_device( struct process *process, unsigned int usage )
 {
     struct rawinput_device *device, *end;
 
     for (device = process->rawinput_devices, end = device + process->rawinput_device_count; device != end; device++)
     {
-        if (device->usage_page != usage_page || device->usage != usage) continue;
+        if (device->usage != usage) continue;
         return device;
     }
 
@@ -1788,7 +1789,9 @@ struct rawinput_message
     struct hw_msg_source     source;
     unsigned int             time;
     unsigned int             message;
-    struct hardware_msg_data data;
+    lparam_t                 info;
+    unsigned int             flags;
+    union rawinput           rawinput;
     const void              *hid_report;
 };
 
@@ -1799,16 +1802,17 @@ static int queue_rawinput_message( struct process* process, void *arg )
     const struct rawinput_device *device = NULL;
     struct desktop *target_desktop = NULL, *desktop = NULL;
     struct thread *target_thread = NULL, *foreground = NULL;
+    struct hardware_msg_data *msg_data;
     struct message *msg;
     data_size_t report_size;
     int wparam = RIM_INPUT;
 
-    if (raw_msg->data.rawinput.type == RIM_TYPEMOUSE)
+    if (raw_msg->rawinput.type == RIM_TYPEMOUSE)
         device = process->rawinput_mouse;
-    else if (raw_msg->data.rawinput.type == RIM_TYPEKEYBOARD)
+    else if (raw_msg->rawinput.type == RIM_TYPEKEYBOARD)
         device = process->rawinput_kbd;
     else
-        device = find_rawinput_device( process, raw_msg->data.rawinput.hid.usage_page, raw_msg->data.rawinput.hid.usage );
+        device = find_rawinput_device( process, raw_msg->rawinput.hid.usage );
     if (!device) return 0;
 
     if (raw_msg->message == WM_INPUT_DEVICE_CHANGE && !(device->flags & RIDEV_DEVNOTIFY)) return 0;
@@ -1828,23 +1832,24 @@ static int queue_rawinput_message( struct process* process, void *arg )
         wparam = RIM_INPUTSINK;
     }
 
-    if (raw_msg->data.rawinput.type != RIM_TYPEHID || !raw_msg->hid_report) report_size = 0;
-    else report_size = raw_msg->data.size - sizeof(raw_msg->data);
+    if (raw_msg->rawinput.type != RIM_TYPEHID || !raw_msg->hid_report) report_size = 0;
+    else report_size = raw_msg->rawinput.hid.count * raw_msg->rawinput.hid.length;
 
-    if (!(msg = alloc_hardware_message( raw_msg->data.info, raw_msg->source, raw_msg->time, report_size )))
-        goto done;
-
+    if (!(msg = alloc_hardware_message( raw_msg->info, raw_msg->source, raw_msg->time, report_size ))) goto done;
     msg->win    = device->target;
     msg->msg    = raw_msg->message;
     msg->wparam = wparam;
     msg->lparam = 0;
-    memcpy( msg->data, &raw_msg->data, sizeof(raw_msg->data) );
-    if (report_size) memcpy( (struct hardware_msg_data *)msg->data + 1, raw_msg->hid_report, report_size );
 
-    if (raw_msg->message == WM_INPUT_DEVICE_CHANGE && raw_msg->data.rawinput.type == RIM_TYPEHID)
+    msg_data = msg->data;
+    msg_data->flags = raw_msg->flags;
+    msg_data->rawinput = raw_msg->rawinput;
+    if (report_size) memcpy( msg_data + 1, raw_msg->hid_report, report_size );
+
+    if (raw_msg->message == WM_INPUT_DEVICE_CHANGE && raw_msg->rawinput.type == RIM_TYPEHID)
     {
-        msg->wparam = raw_msg->data.rawinput.hid.param;
-        msg->lparam = raw_msg->data.rawinput.hid.device;
+        msg->wparam = raw_msg->rawinput.hid.wparam;
+        msg->lparam = raw_msg->rawinput.hid.device;
     }
 
     queue_hardware_message( desktop, msg, 1 );
@@ -1923,14 +1928,12 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         raw_msg.time       = time;
         raw_msg.message    = WM_INPUT;
 
-        msg_data = &raw_msg.data;
-        msg_data->info                = input->mouse.info;
-        msg_data->size                = sizeof(*msg_data);
-        msg_data->flags               = flags;
-        msg_data->rawinput.type       = RIM_TYPEMOUSE;
-        msg_data->rawinput.mouse.x    = x - desktop->cursor.x;
-        msg_data->rawinput.mouse.y    = y - desktop->cursor.y;
-        msg_data->rawinput.mouse.data = input->mouse.data;
+        raw_msg.info                = input->mouse.info;
+        raw_msg.flags               = flags;
+        raw_msg.rawinput.type       = RIM_TYPEMOUSE;
+        raw_msg.rawinput.mouse.x    = x - desktop->cursor.x;
+        raw_msg.rawinput.mouse.y    = y - desktop->cursor.y;
+        raw_msg.rawinput.mouse.data = input->mouse.data;
 
         enum_processes( queue_rawinput_message, &raw_msg );
         release_object( foreground );
@@ -2061,14 +2064,12 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
         raw_msg.time       = time;
         raw_msg.message    = WM_INPUT;
 
-        msg_data = &raw_msg.data;
-        msg_data->info                 = input->kbd.info;
-        msg_data->size                 = sizeof(*msg_data);
-        msg_data->flags                = input->kbd.flags;
-        msg_data->rawinput.type        = RIM_TYPEKEYBOARD;
-        msg_data->rawinput.kbd.message = message_code;
-        msg_data->rawinput.kbd.vkey    = vkey;
-        msg_data->rawinput.kbd.scan    = input->kbd.scan;
+        raw_msg.info                 = input->kbd.info;
+        raw_msg.flags                = input->kbd.flags;
+        raw_msg.rawinput.type        = RIM_TYPEKEYBOARD;
+        raw_msg.rawinput.kbd.message = message_code;
+        raw_msg.rawinput.kbd.vkey    = vkey;
+        raw_msg.rawinput.kbd.scan    = input->kbd.scan;
 
         enum_processes( queue_rawinput_message, &raw_msg );
         release_object( foreground );
@@ -2116,10 +2117,8 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
                                            unsigned int origin, const hw_input_t *input )
 {
     struct hw_msg_source source = { IMDT_UNAVAILABLE, origin };
-    struct hardware_msg_data *msg_data;
     struct rawinput_message raw_msg;
     struct message *msg;
-    data_size_t report_size = 0;
 
     switch (input->hw.msg)
     {
@@ -2129,22 +2128,19 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
         raw_msg.source     = source;
         raw_msg.time       = get_tick_count();
         raw_msg.message    = input->hw.msg;
-
-        if (input->hw.rawinput.type == RIM_TYPEHID)
-        {
-            raw_msg.hid_report = get_req_data();
-            report_size = input->hw.rawinput.hid.length * input->hw.rawinput.hid.count;
-        }
-
-        if (report_size != get_req_data_size())
+        raw_msg.hid_report = get_req_data();
+        if (input->hw.hid.length * input->hw.hid.count != get_req_data_size())
         {
             set_error( STATUS_INVALID_PARAMETER );
             return;
         }
 
-        msg_data = &raw_msg.data;
-        msg_data->size     = sizeof(*msg_data) + report_size;
-        msg_data->rawinput = input->hw.rawinput;
+        raw_msg.rawinput.hid.type = RIM_TYPEHID;
+        raw_msg.rawinput.hid.device = input->hw.hid.device;
+        raw_msg.rawinput.hid.wparam = input->hw.wparam;
+        raw_msg.rawinput.hid.usage = input->hw.hid.usage;
+        raw_msg.rawinput.hid.count = input->hw.hid.count;
+        raw_msg.rawinput.hid.length = input->hw.hid.length;
 
         enum_processes( queue_rawinput_message, &raw_msg );
         return;
@@ -3505,6 +3501,6 @@ DECL_HANDLER(update_rawinput_devices)
     process->rawinput_device_count = device_count;
     memcpy( process->rawinput_devices, devices, size );
 
-    process->rawinput_mouse = find_rawinput_device( process, 1, 2 );
-    process->rawinput_kbd = find_rawinput_device( process, 1, 6 );
+    process->rawinput_mouse = find_rawinput_device( process, MAKELONG(HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC) );
+    process->rawinput_kbd = find_rawinput_device( process, MAKELONG(HID_USAGE_GENERIC_KEYBOARD, HID_USAGE_PAGE_GENERIC) );
 }

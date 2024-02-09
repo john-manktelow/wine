@@ -284,9 +284,8 @@ union rawinput
     {
         int            type;
         unsigned int   device;
-        unsigned int   param;
-        unsigned short usage_page;
-        unsigned short usage;
+        unsigned int   wparam;
+        unsigned int   usage;
         unsigned int   count;
         unsigned int   length;
     } hid;
@@ -344,8 +343,15 @@ typedef union
     {
         int            type;
         unsigned int   msg;
+        lparam_t       wparam;
         lparam_t       lparam;
-        union rawinput rawinput;
+        struct
+        {
+            unsigned int device;
+            unsigned int usage;
+            unsigned int count;
+            unsigned int length;
+        } hid;
     } hw;
 } hw_input_t;
 
@@ -844,7 +850,8 @@ typedef struct
     unsigned char  contains_code : 1;
     unsigned char  wine_builtin : 1;
     unsigned char  wine_fakedll : 1;
-    unsigned char  padding : 5;
+    unsigned char  is_hybrid : 1;
+    unsigned char  padding : 4;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -862,8 +869,7 @@ typedef struct
 
 struct rawinput_device
 {
-    unsigned short usage_page;
-    unsigned short usage;
+    unsigned int   usage;
     unsigned int   flags;
     user_handle_t  target;
 };
@@ -974,9 +980,8 @@ struct init_process_done_request
 struct init_process_done_reply
 {
     struct reply_header __header;
-    client_ptr_t entry;
     int          suspend;
-    char __pad_20[4];
+    char __pad_12[4];
 };
 
 
@@ -6507,7 +6512,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 786
+#define SERVER_PROTOCOL_VERSION 791
 
 /* ### protocol_version end ### */
 

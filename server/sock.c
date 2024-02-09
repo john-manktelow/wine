@@ -1231,7 +1231,7 @@ static int sock_dispatch_asyncs( struct sock *sock, int event, int error )
         event &= ~(POLLIN | POLLPRI);
     }
 
-    if ((event & POLLOUT) && async_queued( &sock->write_q ))
+    if ((event & POLLOUT) && async_queue_has_waiting_asyncs( &sock->write_q ))
     {
         if (async_waiting( &sock->write_q ))
         {
@@ -3945,7 +3945,7 @@ DECL_HANDLER(send_socket)
 
     if (bind_errno) status = sock_get_ntstatus( bind_errno );
     else if (sock->wr_shutdown) status = STATUS_PIPE_DISCONNECTED;
-    else if (!async_queued( &sock->write_q ))
+    else if (!async_queue_has_waiting_asyncs( &sock->write_q ))
     {
         /* If write_q is not empty, we cannot really tell if the already queued
          * asyncs will not consume all available space; if there's no space

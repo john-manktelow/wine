@@ -455,9 +455,7 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
     unwind_done:
         if (!dispatch.EstablisherFrame) break;
 
-        if ((dispatch.EstablisherFrame & 7) ||
-            dispatch.EstablisherFrame < (ULONG64)NtCurrentTeb()->Tib.StackLimit ||
-            dispatch.EstablisherFrame > (ULONG64)NtCurrentTeb()->Tib.StackBase)
+        if (!is_valid_frame( dispatch.EstablisherFrame ))
         {
             ERR_(seh)( "invalid frame %p (%p-%p)\n", (void *)dispatch.EstablisherFrame,
                        NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
@@ -493,7 +491,7 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
             }
         }
         /* hack: call wine handlers registered in the tib list */
-        else while ((ULONG64)teb_frame < context.Rsp)
+        else while (is_valid_frame( (ULONG_PTR)teb_frame ) && (ULONG64)teb_frame < context.Rsp)
         {
             TRACE_(seh)( "found wine frame %p rsp %p handler %p\n",
                          teb_frame, (void *)context.Rsp, teb_frame->Handler );
@@ -1323,7 +1321,7 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
     }
 
     /* hack: remove no longer accessible TEB frames */
-    while ((ULONG64)teb_frame < context->Rsp)
+    while (is_valid_frame( (ULONG_PTR)teb_frame ) && (ULONG64)teb_frame < context->Rsp)
     {
         TRACE_(seh)( "removing TEB frame: %p\n", teb_frame );
         teb_frame = __wine_pop_frame( teb_frame );
@@ -1389,9 +1387,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     unwind_done:
         if (!dispatch.EstablisherFrame) break;
 
-        if ((dispatch.EstablisherFrame & 7) ||
-            dispatch.EstablisherFrame < (ULONG64)NtCurrentTeb()->Tib.StackLimit ||
-            dispatch.EstablisherFrame > (ULONG64)NtCurrentTeb()->Tib.StackBase)
+        if (!is_valid_frame( dispatch.EstablisherFrame ))
         {
             ERR( "invalid frame %p (%p-%p)\n", (void *)dispatch.EstablisherFrame,
                  NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
@@ -1426,7 +1422,9 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         else  /* hack: call builtin handlers registered in the tib list */
         {
             DWORD64 backup_frame = dispatch.EstablisherFrame;
-            while ((ULONG64)teb_frame < new_context.Rsp && (ULONG64)teb_frame < (ULONG64)end_frame)
+            while (is_valid_frame( (ULONG_PTR)teb_frame ) &&
+                   (ULONG64)teb_frame < new_context.Rsp &&
+                   (ULONG64)teb_frame < (ULONG64)end_frame)
             {
                 TRACE( "found builtin frame %p handler %p\n", teb_frame, teb_frame->Handler );
                 dispatch.EstablisherFrame = (ULONG64)teb_frame;
@@ -1634,9 +1632,7 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 
         if (!dispatch.EstablisherFrame) break;
 
-        if ((dispatch.EstablisherFrame & 7) ||
-            dispatch.EstablisherFrame < (ULONG64)NtCurrentTeb()->Tib.StackLimit ||
-            dispatch.EstablisherFrame > (ULONG64)NtCurrentTeb()->Tib.StackBase)
+        if (!is_valid_frame( dispatch.EstablisherFrame ))
         {
             ERR( "invalid frame %p (%p-%p)\n", (void *)dispatch.EstablisherFrame,
                  NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
@@ -1748,6 +1744,23 @@ void WINAPI process_breakpoint(void)
 /***********************************************************************
  *		DbgUiRemoteBreakin   (NTDLL.@)
  */
+#ifdef __WINE_PE_BUILD
+__ASM_GLOBAL_FUNC( DbgUiRemoteBreakin,
+                   "subq $0x28,%rsp\n\t"
+                   ".seh_stackalloc 0x28\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler DbgUiRemoteBreakin_handler, @except\n\t"
+                   "mov %gs:0x30,%rax\n\t"
+                   "mov 0x60(%rax),%rax\n\t"
+                   "cmpb $0,2(%rax)\n\t"
+                   "je 1f\n\t"
+                   "call " __ASM_NAME("DbgBreakPoint") "\n"
+                   "1:\txorl %ecx,%ecx\n\t"
+                   "call " __ASM_NAME("RtlExitUserThread") "\n"
+                   "DbgUiRemoteBreakin_handler:\n\t"
+                   "movq %rdx,%rsp\n\t"  /* frame */
+                   "jmp 1b" )
+#else
 void WINAPI DbgUiRemoteBreakin( void *arg )
 {
     if (NtCurrentTeb()->Peb->BeingDebugged)
@@ -1764,7 +1777,7 @@ void WINAPI DbgUiRemoteBreakin( void *arg )
     }
     RtlExitUserThread( STATUS_SUCCESS );
 }
-
+#endif
 
 /**********************************************************************
  *		DbgBreakPoint   (NTDLL.@)

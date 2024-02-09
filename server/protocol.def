@@ -300,9 +300,8 @@ union rawinput
     {
         int            type;    /* RIM_TYPEHID */
         unsigned int   device;  /* rawinput device index */
-        unsigned int   param;   /* rawinput message param */
-        unsigned short usage_page;/* HID usage page */
-        unsigned short usage;   /* HID usage */
+        unsigned int   wparam;  /* rawinput message wparam */
+        unsigned int   usage;   /* HID device usage */
         unsigned int   count;   /* HID report count */
         unsigned int   length;  /* HID report length */
     } hid;
@@ -360,8 +359,15 @@ typedef union
     {
         int            type;    /* INPUT_HARDWARE */
         unsigned int   msg;     /* message code */
-        lparam_t       lparam;  /* message param */
-        union rawinput rawinput;/* rawinput message data */
+        lparam_t       wparam;  /* parameters */
+        lparam_t       lparam;  /* parameters */
+        struct
+        {
+            unsigned int device;  /* rawinput device index */
+            unsigned int usage;   /* HID device usage */
+            unsigned int count;   /* HID report count */
+            unsigned int length;  /* HID report length */
+        } hid;
     } hw;
 } hw_input_t;
 
@@ -860,7 +866,8 @@ typedef struct
     unsigned char  contains_code : 1;
     unsigned char  wine_builtin : 1;
     unsigned char  wine_fakedll : 1;
-    unsigned char  padding : 5;
+    unsigned char  is_hybrid : 1;
+    unsigned char  padding : 4;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -878,8 +885,7 @@ typedef struct
 
 struct rawinput_device
 {
-    unsigned short usage_page;
-    unsigned short usage;
+    unsigned int   usage;
     unsigned int   flags;
     user_handle_t  target;
 };
@@ -958,7 +964,6 @@ typedef struct
     client_ptr_t peb;          /* PEB of new process (in process address space) */
     client_ptr_t ldt_copy;     /* address of LDT copy (in process address space) */
 @REPLY
-    client_ptr_t entry;        /* process entry point */
     int          suspend;      /* is process suspended? */
 @END
 
