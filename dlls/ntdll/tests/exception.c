@@ -187,6 +187,7 @@ typedef struct _UNWIND_INFO
 
 static BOOLEAN   (CDECL *pRtlInstallFunctionTableCallback)(DWORD64, DWORD64, DWORD, PGET_RUNTIME_FUNCTION_CALLBACK, PVOID, PCWSTR);
 static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionEntry)(ULONG64, ULONG64*, UNWIND_HISTORY_TABLE*);
+static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionTable)(ULONG64, ULONG64*, ULONG*);
 static DWORD     (WINAPI *pRtlAddGrowableFunctionTable)(void**, RUNTIME_FUNCTION*, DWORD, DWORD, ULONG_PTR, ULONG_PTR);
 static void      (WINAPI *pRtlGrowFunctionTable)(void*, DWORD);
 static void      (WINAPI *pRtlDeleteGrowableFunctionTable)(void*);
@@ -196,6 +197,7 @@ static VOID      (CDECL *pRtlRestoreContext)(CONTEXT*, EXCEPTION_RECORD*);
 static NTSTATUS  (WINAPI *pRtlWow64GetThreadContext)(HANDLE, WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64SetThreadContext)(HANDLE, const WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64GetCpuAreaInfo)(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
+static NTSTATUS  (WINAPI *pRtlGetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
 static int       (CDECL *p_setjmp)(_JUMP_BUFFER*);
 #endif
 
@@ -2793,11 +2795,13 @@ static void test_dynamic_unwind(void)
 {
     static const int code_offset = 1024;
     char buf[2 * sizeof(RUNTIME_FUNCTION) + 4];
+    SYSTEM_CPU_INFORMATION info;
     RUNTIME_FUNCTION *runtime_func, *func;
     ULONG_PTR table, base;
-    void *growable_table;
+    void *growable_table, *ptr;
     NTSTATUS status;
     DWORD count;
+    ULONG len, len2;
 
     if (!pRtlInstallFunctionTableCallback || !pRtlLookupFunctionEntry)
     {
@@ -2976,7 +2980,46 @@ static void test_dynamic_unwind(void)
     ok( base == (ULONG_PTR)code_mem,
         "RtlLookupFunctionEntry returned invalid base, expected: %Ix, got: %Ix\n", (ULONG_PTR)code_mem, base );
 
+    base = 0xdeadbeef;
+    func = pRtlLookupFunctionTable( (ULONG_PTR)code_mem + code_offset + 8, &base, &len );
+    ok( func == NULL, "RtlLookupFunctionTable wrong table, got: %p\n", func );
+    ok( base == 0xdeadbeef, "RtlLookupFunctionTable wrong base, got: %Ix\n", base );
+
+    base = 0xdeadbeef;
+    func = pRtlLookupFunctionTable( (ULONG_PTR)pRtlLookupFunctionEntry, &base, &len );
+    ok( base == (ULONG_PTR)GetModuleHandleA("ntdll.dll"),
+        "RtlLookupFunctionTable wrong base, got: %Ix / %p\n", base, GetModuleHandleA("ntdll.dll") );
+    ptr = RtlImageDirectoryEntryToData( (void *)base, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &len2 );
+    ok( func == ptr, "RtlLookupFunctionTable wrong table, got: %p / %p\n", func, ptr );
+    ok( len == len2, "RtlLookupFunctionTable wrong len, got: %lu / %lu\n", len, len2 );
+
     pRtlDeleteGrowableFunctionTable( growable_table );
+
+    if (pRtlGetNativeSystemInformation &&
+        !pRtlGetNativeSystemInformation( SystemCpuInformation, &info, sizeof(info), &len ) &&
+        info.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64)
+    {
+        static const BYTE fast_forward[] = { 0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x20, 0x55, 0x5d, 0xe9 };
+        IMAGE_ARM64EC_METADATA *metadata;
+
+        if (!memcmp( pRtlLookupFunctionEntry, fast_forward, sizeof(fast_forward) ))
+        {
+            ptr = (char *)pRtlLookupFunctionEntry + sizeof(fast_forward);
+            ptr = (char *)ptr + 4 + *(int *)ptr;
+            base = 0xdeadbeef;
+            func = pRtlLookupFunctionTable( (ULONG_PTR)ptr, &base, &len );
+            ok( base == (ULONG_PTR)GetModuleHandleA("ntdll.dll"),
+                "RtlLookupFunctionTable wrong base, got: %Ix / %p\n", base, GetModuleHandleA("ntdll.dll") );
+            ptr = RtlImageDirectoryEntryToData( (void *)base, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &len2 );
+            ok( func != ptr, "RtlLookupFunctionTable wrong table, got: %p / %p\n", func, ptr );
+            ptr = RtlImageDirectoryEntryToData( (void *)base, TRUE, IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &len2 );
+            metadata = (void *)((IMAGE_LOAD_CONFIG_DIRECTORY *)ptr)->CHPEMetadataPointer;
+            ok( (char *)func == (char *)base + metadata->ExtraRFETable,
+                "RtlLookupFunctonTable wrong table, got: %p / %p\n", func, (char *)base + metadata->ExtraRFETable );
+            ok( len == metadata->ExtraRFETableSize, "RtlLookupFunctionTable wrong len, got: %lu / %lu\n",
+                len, metadata->ExtraRFETableSize );
+        }
+    }
 }
 
 static int termination_handler_called;
@@ -3260,7 +3303,6 @@ static DWORD WINAPI handler( EXCEPTION_RECORD *rec, ULONG64 frame,
 {
     const struct exception *except = *(const struct exception **)(dispatcher->HandlerData);
     unsigned int i, parameter_count, entry = except - exceptions;
-    USHORT ds, es, fs, gs, ss;
 
     got_exception++;
     winetest_push_context( "%u: %lx", entry, rec->ExceptionCode );
@@ -3274,24 +3316,29 @@ static DWORD WINAPI handler( EXCEPTION_RECORD *rec, ULONG64 frame,
         (rec->ExceptionCode == STATUS_BREAKPOINT && rec->ExceptionAddress == (char*)context->Rip + 1),
         "Unexpected exception address %p/%p\n", rec->ExceptionAddress, (char*)context->Rip );
 
-    __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
-    __asm__ volatile( "movw %%es,%0" : "=g" (es) );
-    __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
-    __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
-    __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
-    ok( context->SegDs == ds || !ds, "ds %#x does not match %#x\n", context->SegDs, ds );
-    ok( context->SegEs == es || !es, "es %#x does not match %#x\n", context->SegEs, es );
-    ok( context->SegFs == fs || !fs, "fs %#x does not match %#x\n", context->SegFs, fs );
-    ok( context->SegGs == gs || !gs, "gs %#x does not match %#x\n", context->SegGs, gs );
-    ok( context->SegSs == ss, "ss %#x does not match %#x\n", context->SegSs, ss );
-    ok( context->SegDs == context->SegSs,
-        "ds %#x does not match ss %#x\n", context->SegDs, context->SegSs );
-    ok( context->SegEs == context->SegSs,
-        "es %#x does not match ss %#x\n", context->SegEs, context->SegSs );
-    ok( context->SegGs == context->SegSs,
-        "gs %#x does not match ss %#x\n", context->SegGs, context->SegSs );
-    todo_wine ok( context->SegFs && context->SegFs != context->SegSs,
-        "got fs %#x\n", context->SegFs );
+#ifndef __arm64ec__
+    {
+        USHORT ds, es, fs, gs, ss;
+        __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
+        __asm__ volatile( "movw %%es,%0" : "=g" (es) );
+        __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
+        __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
+        __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
+        ok( context->SegDs == ds || !ds, "ds %#x does not match %#x\n", context->SegDs, ds );
+        ok( context->SegEs == es || !es, "es %#x does not match %#x\n", context->SegEs, es );
+        ok( context->SegFs == fs || !fs, "fs %#x does not match %#x\n", context->SegFs, fs );
+        ok( context->SegGs == gs || !gs, "gs %#x does not match %#x\n", context->SegGs, gs );
+        ok( context->SegSs == ss, "ss %#x does not match %#x\n", context->SegSs, ss );
+        ok( context->SegDs == context->SegSs,
+            "ds %#x does not match ss %#x\n", context->SegDs, context->SegSs );
+        ok( context->SegEs == context->SegSs,
+            "es %#x does not match ss %#x\n", context->SegEs, context->SegSs );
+        ok( context->SegGs == context->SegSs,
+            "gs %#x does not match ss %#x\n", context->SegGs, context->SegSs );
+        todo_wine ok( context->SegFs && context->SegFs != context->SegSs,
+                      "got fs %#x\n", context->SegFs );
+    }
+#endif
 
     if (except->status == STATUS_BREAKPOINT && is_wow64)
         parameter_count = 1;
@@ -3561,7 +3608,6 @@ static void test_exceptions(void)
 {
     CONTEXT ctx;
     NTSTATUS res;
-    USHORT ds, es, fs, gs, ss;
     struct dbgreg_test dreg_test;
 
     /* test handling of debug registers */
@@ -3614,45 +3660,50 @@ static void test_exceptions(void)
     /* test int3 handling */
     run_exception_test(int3_handler, NULL, int3_code, sizeof(int3_code), 0);
 
-    /* test segment registers */
-    ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_SEGMENTS;
-    res = pNtGetContextThread( GetCurrentThread(), &ctx );
-    ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
-    __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
-    __asm__ volatile( "movw %%es,%0" : "=g" (es) );
-    __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
-    __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
-    __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
-    ok( ctx.SegDs == ds, "wrong ds %04x / %04x\n", ctx.SegDs, ds );
-    ok( ctx.SegEs == es, "wrong es %04x / %04x\n", ctx.SegEs, es );
-    ok( ctx.SegFs == fs, "wrong fs %04x / %04x\n", ctx.SegFs, fs );
-    ok( ctx.SegGs == gs || !gs, "wrong gs %04x / %04x\n", ctx.SegGs, gs );
-    ok( ctx.SegSs == ss, "wrong ss %04x / %04x\n", ctx.SegSs, ss );
-    ok( ctx.SegDs == ctx.SegSs, "wrong ds %04x / %04x\n", ctx.SegDs, ctx.SegSs );
-    ok( ctx.SegEs == ctx.SegSs, "wrong es %04x / %04x\n", ctx.SegEs, ctx.SegSs );
-    ok( ctx.SegFs != ctx.SegSs, "wrong fs %04x / %04x\n", ctx.SegFs, ctx.SegSs );
-    ok( ctx.SegGs == ctx.SegSs, "wrong gs %04x / %04x\n", ctx.SegGs, ctx.SegSs );
-    ctx.SegDs = 0;
-    ctx.SegEs = ctx.SegFs;
-    ctx.SegFs = ctx.SegSs;
-    res = pNtSetContextThread( GetCurrentThread(), &ctx );
-    ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
-    __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
-    __asm__ volatile( "movw %%es,%0" : "=g" (es) );
-    __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
-    __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
-    __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
-    res = pNtGetContextThread( GetCurrentThread(), &ctx );
-    ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
-    ok( ctx.SegDs == ds, "wrong ds %04x / %04x\n", ctx.SegDs, ds );
-    ok( ctx.SegEs == es, "wrong es %04x / %04x\n", ctx.SegEs, es );
-    ok( ctx.SegFs == fs, "wrong fs %04x / %04x\n", ctx.SegFs, fs );
-    ok( ctx.SegGs == gs || !gs, "wrong gs %04x / %04x\n", ctx.SegGs, gs );
-    ok( ctx.SegSs == ss, "wrong ss %04x / %04x\n", ctx.SegSs, ss );
-    ok( ctx.SegDs == ctx.SegSs, "wrong ds %04x / %04x\n", ctx.SegDs, ctx.SegSs );
-    ok( ctx.SegEs == ctx.SegSs, "wrong es %04x / %04x\n", ctx.SegEs, ctx.SegSs );
-    ok( ctx.SegFs != ctx.SegSs, "wrong fs %04x / %04x\n", ctx.SegFs, ctx.SegSs );
-    ok( ctx.SegGs == ctx.SegSs, "wrong gs %04x / %04x\n", ctx.SegGs, ctx.SegSs );
+#ifndef __arm64ec__
+    {
+        USHORT ds, es, fs, gs, ss;
+        /* test segment registers */
+        ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_SEGMENTS;
+        res = pNtGetContextThread( GetCurrentThread(), &ctx );
+        ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
+        __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
+        __asm__ volatile( "movw %%es,%0" : "=g" (es) );
+        __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
+        __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
+        __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
+        ok( ctx.SegDs == ds, "wrong ds %04x / %04x\n", ctx.SegDs, ds );
+        ok( ctx.SegEs == es, "wrong es %04x / %04x\n", ctx.SegEs, es );
+        ok( ctx.SegFs == fs, "wrong fs %04x / %04x\n", ctx.SegFs, fs );
+        ok( ctx.SegGs == gs || !gs, "wrong gs %04x / %04x\n", ctx.SegGs, gs );
+        ok( ctx.SegSs == ss, "wrong ss %04x / %04x\n", ctx.SegSs, ss );
+        ok( ctx.SegDs == ctx.SegSs, "wrong ds %04x / %04x\n", ctx.SegDs, ctx.SegSs );
+        ok( ctx.SegEs == ctx.SegSs, "wrong es %04x / %04x\n", ctx.SegEs, ctx.SegSs );
+        ok( ctx.SegFs != ctx.SegSs, "wrong fs %04x / %04x\n", ctx.SegFs, ctx.SegSs );
+        ok( ctx.SegGs == ctx.SegSs, "wrong gs %04x / %04x\n", ctx.SegGs, ctx.SegSs );
+        ctx.SegDs = 0;
+        ctx.SegEs = ctx.SegFs;
+        ctx.SegFs = ctx.SegSs;
+        res = pNtSetContextThread( GetCurrentThread(), &ctx );
+        ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
+        __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
+        __asm__ volatile( "movw %%es,%0" : "=g" (es) );
+        __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
+        __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
+        __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
+        res = pNtGetContextThread( GetCurrentThread(), &ctx );
+        ok( res == STATUS_SUCCESS, "NtGetContextThread failed with %lx\n", res );
+        ok( ctx.SegDs == ds, "wrong ds %04x / %04x\n", ctx.SegDs, ds );
+        ok( ctx.SegEs == es, "wrong es %04x / %04x\n", ctx.SegEs, es );
+        ok( ctx.SegFs == fs, "wrong fs %04x / %04x\n", ctx.SegFs, fs );
+        ok( ctx.SegGs == gs || !gs, "wrong gs %04x / %04x\n", ctx.SegGs, gs );
+        ok( ctx.SegSs == ss, "wrong ss %04x / %04x\n", ctx.SegSs, ss );
+        ok( ctx.SegDs == ctx.SegSs, "wrong ds %04x / %04x\n", ctx.SegDs, ctx.SegSs );
+        ok( ctx.SegEs == ctx.SegSs, "wrong es %04x / %04x\n", ctx.SegEs, ctx.SegSs );
+        ok( ctx.SegFs != ctx.SegSs, "wrong fs %04x / %04x\n", ctx.SegFs, ctx.SegSs );
+        ok( ctx.SegGs == ctx.SegSs, "wrong gs %04x / %04x\n", ctx.SegGs, ctx.SegSs );
+    }
+#endif
 }
 
 static DWORD WINAPI simd_fault_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
@@ -4175,8 +4226,12 @@ static void test_debugger(DWORD cont_status, BOOL with_WaitForDebugEventEx)
                 }
                 else if (stage == STAGE_SEGMENTS)
                 {
+#ifdef __arm64ec__
+                    USHORT ss = 0x2b;
+#else
                     USHORT ss;
                     __asm__( "movw %%ss,%0" : "=r" (ss) );
+#endif
                     ok( ctx.SegSs == ss, "wrong ss %04x / %04x\n", ctx.SegSs, ss );
                     ok( ctx.SegDs == ctx.SegSs, "wrong ds %04x / %04x\n", ctx.SegDs, ctx.SegSs );
                     ok( ctx.SegEs == ctx.SegSs, "wrong es %04x / %04x\n", ctx.SegEs, ctx.SegSs );
@@ -11476,6 +11531,7 @@ static void test_extended_context(void)
 
     enabled_features = pRtlGetEnabledExtendedFeatures(~(ULONG64)0);
 
+#ifndef __arm64ec__
     if (enabled_features)
     {
         int regs[4];
@@ -11484,6 +11540,7 @@ static void test_extended_context(void)
         xsaveopt_enabled = regs[0] & 1;
         compaction_enabled = regs[0] & 2;
     }
+#endif
 
     /* Test context manipulation functions. */
     length = 0xdeadbeef;
@@ -13006,6 +13063,7 @@ START_TEST(exception)
 #define X(f) p##f = (void*)GetProcAddress(hntdll, #f)
     X(RtlInstallFunctionTableCallback);
     X(RtlLookupFunctionEntry);
+    X(RtlLookupFunctionTable);
     X(RtlAddGrowableFunctionTable);
     X(RtlGrowFunctionTable);
     X(RtlDeleteGrowableFunctionTable);
@@ -13015,6 +13073,7 @@ START_TEST(exception)
     X(RtlWow64GetThreadContext);
     X(RtlWow64SetThreadContext);
     X(RtlWow64GetCpuAreaInfo);
+    X(RtlGetNativeSystemInformation);
 #undef X
     p_setjmp = (void *)GetProcAddress( hmsvcrt, "_setjmp" );
 
