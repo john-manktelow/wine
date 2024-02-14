@@ -38,18 +38,6 @@ WINE_DECLARE_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
-typedef struct _SCOPE_TABLE
-{
-    ULONG Count;
-    struct
-    {
-        ULONG BeginAddress;
-        ULONG EndAddress;
-        ULONG HandlerAddress;
-        ULONG JumpTarget;
-    } ScopeRecord[1];
-} SCOPE_TABLE, *PSCOPE_TABLE;
-
 
 /* layering violation: the setjmp buffer is defined in msvcrt, but used by RtlUnwindEx */
 struct MSVCRT_JUMP_BUFFER
@@ -261,6 +249,28 @@ static void dump_scope_table( ULONG64 base, const SCOPE_TABLE *table )
                (char *)base + table->ScopeRecord[i].JumpTarget );
 }
 
+static RUNTIME_FUNCTION *find_function_info( ULONG_PTR pc, ULONG_PTR base,
+                                             RUNTIME_FUNCTION *func, ULONG size )
+{
+    int min = 0;
+    int max = size - 1;
+
+    while (min <= max)
+    {
+        int pos = (min + max) / 2;
+        if (pc < base + func[pos].BeginAddress) max = pos - 1;
+        else if (pc >= base + func[pos].EndAddress) min = pos + 1;
+        else
+        {
+            func += pos;
+            while (func->UnwindData & 1)  /* follow chained entry */
+                func = (RUNTIME_FUNCTION *)(base + (func->UnwindData & ~1));
+            return func;
+        }
+    }
+    return NULL;
+}
+
 
 /***********************************************************************
  *           virtual_unwind
@@ -276,7 +286,8 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 
     /* first look for PE exception information */
 
-    if ((dispatch->FunctionEntry = lookup_function_info( context->Rip, &dispatch->ImageBase, &module )))
+    if ((dispatch->FunctionEntry = RtlLookupFunctionEntry( context->Rip, &dispatch->ImageBase,
+                                                           dispatch->HistoryTable )))
     {
         dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, context->Rip,
                                                       dispatch->FunctionEntry, context,
@@ -287,7 +298,7 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 
     /* then look for host system exception information */
 
-    if (!module || (module->Flags & LDR_WINE_INTERNAL))
+    if (LdrFindEntryForAddress( (void *)context->Rip, &module ) || (module->Flags & LDR_WINE_INTERNAL))
     {
         struct unwind_builtin_dll_params params = { type, dispatch, context };
 
@@ -299,10 +310,10 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
         }
         if (status != STATUS_UNSUCCESSFUL) return status;
     }
-    else WARN( "exception data not found in %s\n", debugstr_w(module->BaseDllName.Buffer) );
 
     /* no exception information, treat as a leaf function */
 
+    WARN( "exception data not found for pc %p\n", (void *)context->Rip );
     dispatch->EstablisherFrame = context->Rsp;
     dispatch->LanguageHandler = NULL;
     context->Rip = *(ULONG64 *)context->Rsp;
@@ -1040,6 +1051,45 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionTable( ULONG_PTR pc, ULONG_PTR *base, 
     if (LdrFindEntryForAddress( (void *)pc, &module )) return NULL;
     *base = (ULONG_PTR)module->DllBase;
     return RtlImageDirectoryEntryToData( module->DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, len );
+}
+
+
+/**********************************************************************
+ *              RtlLookupFunctionEntry   (NTDLL.@)
+ */
+PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
+                                                 UNWIND_HISTORY_TABLE *table )
+{
+    RUNTIME_FUNCTION *func;
+    ULONG_PTR dynbase;
+    ULONG size;
+
+    if ((func = RtlLookupFunctionTable( pc, base, &size )))
+        return find_function_info( pc, *base, func, size / sizeof(*func));
+
+    if ((func = lookup_dynamic_function_table( pc, &dynbase, &size )))
+    {
+        RUNTIME_FUNCTION *ret = find_function_info( pc, dynbase, func, size );
+        if (ret) *base = dynbase;
+        return ret;
+    }
+
+    *base = 0;
+    return NULL;
+}
+
+
+/**********************************************************************
+ *              RtlAddFunctionTable   (NTDLL.@)
+ */
+BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_PTR base )
+{
+    ULONG_PTR end = base;
+    void *ret;
+
+    if (count) end += table[count - 1].EndAddress;
+
+    return !RtlAddGrowableFunctionTable( &ret, table, count, 0, base, end );
 }
 
 

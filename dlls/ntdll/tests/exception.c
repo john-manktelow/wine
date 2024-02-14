@@ -110,18 +110,6 @@ static void (WINAPI *pRtlGetUnloadEventTraceEx)(ULONG **element_size, ULONG **el
 #endif
 
 #if defined(__x86_64__)
-typedef struct
-{
-    ULONG Count;
-    struct
-    {
-        ULONG BeginAddress;
-        ULONG EndAddress;
-        ULONG HandlerAddress;
-        ULONG JumpTarget;
-    } ScopeRecord[1];
-} SCOPE_TABLE;
-
 typedef struct _SETJMP_FLOAT128
 {
     unsigned __int64 DECLSPEC_ALIGN(16) Part[2];
@@ -198,6 +186,7 @@ static NTSTATUS  (WINAPI *pRtlWow64GetThreadContext)(HANDLE, WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64SetThreadContext)(HANDLE, const WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64GetCpuAreaInfo)(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
 static NTSTATUS  (WINAPI *pRtlGetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
+static NTSTATUS  (WINAPI *pNtAllocateVirtualMemoryEx)(HANDLE,PVOID*,SIZE_T*,ULONG,ULONG,MEM_EXTENDED_PARAMETER*,ULONG);
 static int       (CDECL *p_setjmp)(_JUMP_BUFFER*);
 #endif
 
@@ -2981,6 +2970,11 @@ static void test_dynamic_unwind(void)
         "RtlLookupFunctionEntry returned invalid base, expected: %Ix, got: %Ix\n", (ULONG_PTR)code_mem, base );
 
     base = 0xdeadbeef;
+    func = pRtlLookupFunctionEntry( (ULONG_PTR)code_mem + code_offset + 32, &base, NULL );
+    ok( func == NULL, "RtlLookupFunctionEntry got %p\n", func );
+    ok( base == 0xdeadbeef, "RtlLookupFunctionTable wrong base, got: %Ix\n", base );
+
+    base = 0xdeadbeef;
     func = pRtlLookupFunctionTable( (ULONG_PTR)code_mem + code_offset + 8, &base, &len );
     ok( func == NULL, "RtlLookupFunctionTable wrong table, got: %p\n", func );
     ok( base == 0xdeadbeef, "RtlLookupFunctionTable wrong base, got: %Ix\n", base );
@@ -3001,6 +2995,9 @@ static void test_dynamic_unwind(void)
     {
         static const BYTE fast_forward[] = { 0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x20, 0x55, 0x5d, 0xe9 };
         IMAGE_ARM64EC_METADATA *metadata;
+        ARM64_RUNTIME_FUNCTION *arm64func = (ARM64_RUNTIME_FUNCTION *)buf;
+        MEM_EXTENDED_PARAMETER param = { 0 };
+        SIZE_T size = 0x1000;
 
         if (!memcmp( pRtlLookupFunctionEntry, fast_forward, sizeof(fast_forward) ))
         {
@@ -3019,6 +3016,58 @@ static void test_dynamic_unwind(void)
             ok( len == metadata->ExtraRFETableSize, "RtlLookupFunctionTable wrong len, got: %lu / %lu\n",
                 len, metadata->ExtraRFETableSize );
         }
+
+        arm64func->BeginAddress = code_offset;
+        arm64func->Flag = 1;
+        arm64func->FunctionLength = 4;
+        arm64func->RegF = 1;
+        arm64func->RegI = 1;
+        arm64func->H = 1;
+        arm64func->CR = 1;
+        arm64func->FrameSize = 1;
+        arm64func++;
+        arm64func->BeginAddress = code_offset + 16;
+        arm64func->Flag = 1;
+        arm64func->FunctionLength = 4;
+        arm64func->RegF = 1;
+        arm64func->RegI = 1;
+        arm64func->H = 1;
+        arm64func->CR = 1;
+        arm64func->FrameSize = 1;
+
+        param.Type = MemExtendedParameterAttributeFlags;
+        param.ULong64 = MEM_EXTENDED_PARAMETER_EC_CODE;
+        ptr = NULL;
+        status = pNtAllocateVirtualMemoryEx( GetCurrentProcess(), &ptr, &size, MEM_RESERVE | MEM_COMMIT,
+                                             PAGE_EXECUTE_READWRITE, &param, 1 );
+        ok( !status, "NtAllocateVirtualMemoryEx failed %lx\n", status );
+
+        growable_table = NULL;
+        status = pRtlAddGrowableFunctionTable( &growable_table, (RUNTIME_FUNCTION *)buf,
+                                               2, 2, (ULONG_PTR)ptr, (ULONG_PTR)ptr + code_offset + 64 );
+        ok( !status, "RtlAddGrowableFunctionTable failed %lx\n", status );
+
+        base = 0xdeadbeef;
+        func = pRtlLookupFunctionEntry( (ULONG_PTR)ptr + code_offset + 8, &base, NULL );
+        ok( func == (RUNTIME_FUNCTION *)buf, "RtlLookupFunctionEntry expected func: %p, got: %p\n",
+            buf, func );
+        ok( base == (ULONG_PTR)ptr, "RtlLookupFunctionEntry expected base: %Ix, got: %Ix\n",
+            (ULONG_PTR)ptr, base );
+
+        base = 0xdeadbeef;
+        func = pRtlLookupFunctionEntry( (ULONG_PTR)ptr + code_offset + 16, &base, NULL );
+        ok( func == (RUNTIME_FUNCTION *)(buf + sizeof(*arm64func)),
+            "RtlLookupFunctionEntry expected func: %p, got: %p\n", buf + sizeof(*arm64func), func );
+        ok( base == (ULONG_PTR)ptr, "RtlLookupFunctionEntry expected base: %Ix, got: %Ix\n",
+            (ULONG_PTR)ptr, base );
+
+        base = 0xdeadbeef;
+        func = pRtlLookupFunctionEntry( (ULONG_PTR)ptr + code_offset + 32, &base, NULL );
+        ok( !func, "RtlLookupFunctionEntry got: %p\n", func );
+        ok( base == 0xdeadbeef, "RtlLookupFunctionEntry got: %Ix\n", base );
+
+        pRtlDeleteGrowableFunctionTable( growable_table );
+        VirtualFree( ptr, 0, MEM_FREE );
     }
 }
 
@@ -9653,23 +9702,13 @@ static void test_KiUserCallbackDispatcher(void)
     VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code), old_protect, &old_protect );
 }
 
-struct unwind_info
-{
-    DWORD function_length : 18;
-    DWORD version : 2;
-    DWORD x : 1;
-    DWORD e : 1;
-    DWORD epilog : 5;
-    DWORD codes : 5;
-};
-
 static void run_exception_test(void *handler, const void* context,
                                const void *code, unsigned int code_size,
                                unsigned int func2_offset, DWORD access, DWORD handler_flags)
 {
     DWORD buf[14];
     RUNTIME_FUNCTION runtime_func[2];
-    struct unwind_info unwind;
+    IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY_XDATA unwind;
     void (*func)(void) = code_mem;
     DWORD oldaccess, oldaccess2;
 
@@ -9678,19 +9717,19 @@ static void run_exception_test(void *handler, const void* context,
     runtime_func[1].BeginAddress = func2_offset;
     runtime_func[1].UnwindData = 0x1014;
 
-    unwind.function_length = func2_offset / 4;
-    unwind.version = 0;
-    unwind.x = 1;
-    unwind.e = 1;
-    unwind.epilog = 1;
-    unwind.codes = 1;
-    buf[0] = *(DWORD *)&unwind;
+    unwind.FunctionLength = func2_offset / 4;
+    unwind.Version = 0;
+    unwind.ExceptionDataPresent = 1;
+    unwind.EpilogInHeader = 1;
+    unwind.EpilogCount = 1;
+    unwind.CodeWords = 1;
+    buf[0] = unwind.HeaderData;
     buf[1] = 0xe3e481e1; /* mov x29,sp; stp r29,lr,[sp,-#0x10]!; end; nop */
     buf[2] = 0x1028;
     *(const void **)&buf[3] = context;
 
-    unwind.function_length = (code_size - func2_offset) / 4;
-    buf[5] = *(DWORD *)&unwind;
+    unwind.FunctionLength = (code_size - func2_offset) / 4;
+    buf[5] = unwind.HeaderData;
     buf[6] = 0xe3e481e1; /* mov x29,sp; stp r29,lr,[sp,-#0x10]!; end; nop */
     buf[7] = 0x1028;
     *(const void **)&buf[8] = context;
@@ -13074,6 +13113,7 @@ START_TEST(exception)
     X(RtlWow64SetThreadContext);
     X(RtlWow64GetCpuAreaInfo);
     X(RtlGetNativeSystemInformation);
+    X(NtAllocateVirtualMemoryEx);
 #undef X
     p_setjmp = (void *)GetProcAddress( hmsvcrt, "_setjmp" );
 

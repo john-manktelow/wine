@@ -39,18 +39,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
-typedef struct _SCOPE_TABLE
-{
-    ULONG Count;
-    struct
-    {
-        ULONG BeginAddress;
-        ULONG EndAddress;
-        ULONG HandlerAddress;
-        ULONG JumpTarget;
-    } ScopeRecord[1];
-} SCOPE_TABLE, *PSCOPE_TABLE;
-
 
 /* layering violation: the setjmp buffer is defined in msvcrt, but used by RtlUnwindEx */
 struct MSVCRT_JUMP_BUFFER
@@ -160,7 +148,6 @@ __ASM_GLOBAL_FUNC( RtlCaptureContext,
  */
 static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
 {
-    LDR_DATA_TABLE_ENTRY *module;
     NTSTATUS status;
     DWORD64 pc;
 
@@ -171,7 +158,8 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
     dispatch->ControlPcIsUnwound = (context->ContextFlags & CONTEXT_UNWOUND_TO_CALL) != 0;
     pc = context->Pc - (dispatch->ControlPcIsUnwound ? 4 : 0);
 
-    if ((dispatch->FunctionEntry = lookup_function_info( pc, &dispatch->ImageBase, &module )))
+    if ((dispatch->FunctionEntry = RtlLookupFunctionEntry( pc, &dispatch->ImageBase,
+                                                           dispatch->HistoryTable )))
     {
         dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, pc,
                                                       dispatch->FunctionEntry, context,
@@ -180,13 +168,8 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
         return STATUS_SUCCESS;
     }
 
+    WARN( "exception data not found for pc %p, lr %p\n", (void *)context->Pc, (void *)context->Lr );
     status = context->Pc != context->Lr ? STATUS_SUCCESS : STATUS_INVALID_DISPOSITION;
-    if (module)
-        WARN( "exception data not found in %s for pc %p, lr %p\n",
-              debugstr_w(module->BaseDllName.Buffer), (void *)context->Pc, (void *)context->Lr );
-    else
-        WARN( "no module found for pc %p, lr %p\n",
-              (void *)context->Pc, (void *)context->Lr );
     dispatch->EstablisherFrame = context->Sp;
     dispatch->LanguageHandler = NULL;
     context->Pc = context->Lr;
@@ -600,16 +583,6 @@ __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
  * Definitions for Win32 unwind tables
  */
 
-struct unwind_info
-{
-    DWORD function_length : 18;
-    DWORD version : 2;
-    DWORD x : 1;
-    DWORD e : 1;
-    DWORD epilog : 5;
-    DWORD codes : 5;
-};
-
 struct unwind_info_ext
 {
     WORD epilog;
@@ -960,16 +933,16 @@ static void *unwind_packed_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION 
 static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *func,
                                CONTEXT *context, PVOID *handler_data, KNONVOLATILE_CONTEXT_POINTERS *ptrs )
 {
-    struct unwind_info *info;
+    IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY_XDATA *info;
     struct unwind_info_epilog *info_epilog;
     unsigned int i, codes, epilogs, len, offset;
     void *data;
     BYTE *end;
 
-    info = (struct unwind_info *)((char *)base + func->UnwindData);
+    info = (IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY_XDATA *)((char *)base + func->UnwindData);
     data = info + 1;
-    epilogs = info->epilog;
-    codes = info->codes;
+    epilogs = info->EpilogCount;
+    codes = info->CodeWords;
     if (!codes && !epilogs)
     {
         struct unwind_info_ext *infoex = data;
@@ -978,14 +951,15 @@ static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *f
         data = infoex + 1;
     }
     info_epilog = data;
-    if (!info->e) data = info_epilog + epilogs;
+    if (!info->EpilogInHeader) data = info_epilog + epilogs;
 
     offset = ((pc - base) - func->BeginAddress) / 4;
     end = (BYTE *)data + codes * 4;
 
     TRACE( "function %I64x-%I64x: len=%#x ver=%u X=%u E=%u epilogs=%u codes=%u\n",
-           base + func->BeginAddress, base + func->BeginAddress + info->function_length * 4,
-           info->function_length, info->version, info->x, info->e, epilogs, codes * 4 );
+           base + func->BeginAddress, base + func->BeginAddress + info->FunctionLength * 4,
+           info->FunctionLength, info->Version, info->ExceptionDataPresent, info->EpilogInHeader,
+           epilogs, codes * 4 );
 
     /* check for prolog */
     if (offset < codes * 4)
@@ -999,7 +973,7 @@ static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *f
     }
 
     /* check for epilog */
-    if (!info->e)
+    if (!info->EpilogInHeader)
     {
         for (i = 0; i < epilogs; i++)
         {
@@ -1016,13 +990,13 @@ static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *f
             }
         }
     }
-    else if (info->function_length - offset <= codes * 4 - epilogs)
+    else if (info->FunctionLength - offset <= codes * 4 - epilogs)
     {
         BYTE *ptr = (BYTE *)data + epilogs;
         len = get_sequence_len( ptr, end ) + 1;
-        if (offset >= info->function_length - len)
+        if (offset >= info->FunctionLength - len)
         {
-            process_unwind_codes( ptr, end, context, ptrs, offset - (info->function_length - len) );
+            process_unwind_codes( ptr, end, context, ptrs, offset - (info->FunctionLength - len) );
             return NULL;
         }
     }
@@ -1030,11 +1004,38 @@ static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *f
     process_unwind_codes( data, end, context, ptrs, 0 );
 
     /* get handler since we are inside the main code */
-    if (info->x)
+    if (info->ExceptionDataPresent)
     {
         DWORD *handler_rva = (DWORD *)data + codes;
         *handler_data = handler_rva + 1;
         return (char *)base + *handler_rva;
+    }
+    return NULL;
+}
+
+
+/**********************************************************************
+ *              find_function_info
+ */
+static RUNTIME_FUNCTION *find_function_info( ULONG_PTR pc, ULONG_PTR base,
+                                             RUNTIME_FUNCTION *func, ULONG size )
+{
+    int min = 0;
+    int max = size - 1;
+
+    while (min <= max)
+    {
+        int pos = (min + max) / 2;
+        ULONG_PTR start = base + func[pos].BeginAddress;
+
+        if (pc >= start)
+        {
+            ULONG len = func[pos].Flag ? func[pos].FunctionLength :
+                ((IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY_XDATA *)(base + func[pos].UnwindData))->FunctionLength;
+            if (pc < start + 4 * len) return func + pos;
+            min = pos + 1;
+        }
+        else max = pos - 1;
     }
     return NULL;
 }
@@ -1081,6 +1082,50 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionTable( ULONG_PTR pc, ULONG_PTR *base, 
     if (LdrFindEntryForAddress( (void *)pc, &module )) return NULL;
     *base = (ULONG_PTR)module->DllBase;
     return RtlImageDirectoryEntryToData( module->DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, len );
+}
+
+
+/**********************************************************************
+ *              RtlLookupFunctionEntry   (NTDLL.@)
+ */
+PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
+                                                 UNWIND_HISTORY_TABLE *table )
+{
+    RUNTIME_FUNCTION *func;
+    ULONG_PTR dynbase;
+    ULONG size;
+
+    if ((func = RtlLookupFunctionTable( pc, base, &size )))
+        return find_function_info( pc, *base, func, size / sizeof(*func));
+
+    if ((func = lookup_dynamic_function_table( pc, &dynbase, &size )))
+    {
+        RUNTIME_FUNCTION *ret = find_function_info( pc, dynbase, func, size );
+        if (ret) *base = dynbase;
+        return ret;
+    }
+
+    *base = 0;
+    return NULL;
+}
+
+
+/**********************************************************************
+ *              RtlAddFunctionTable   (NTDLL.@)
+ */
+BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_PTR base )
+{
+    ULONG_PTR end = base;
+    void *ret;
+
+    if (count)
+    {
+        RUNTIME_FUNCTION *func = table + count - 1;
+        ULONG len = func->Flag ? func->FunctionLength :
+            ((IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY_XDATA *)(base + func->UnwindData))->FunctionLength;
+        end += func->BeginAddress + 4 * len;
+    }
+    return !RtlAddGrowableFunctionTable( &ret, table, count, 0, base, end );
 }
 
 

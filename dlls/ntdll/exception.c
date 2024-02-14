@@ -382,74 +382,6 @@ static RTL_CRITICAL_SECTION_DEBUG dynamic_unwind_debug =
 };
 static RTL_CRITICAL_SECTION dynamic_unwind_section = { &dynamic_unwind_debug, -1, 0, 0, 0, 0 };
 
-static ULONG_PTR get_runtime_function_end( RUNTIME_FUNCTION *func, ULONG_PTR addr )
-{
-#ifdef __x86_64__
-    return func->EndAddress;
-#elif defined(__arm__)
-    if (func->Flag) return func->BeginAddress + func->FunctionLength * 2;
-    else
-    {
-        struct unwind_info
-        {
-            DWORD function_length : 18;
-            DWORD version : 2;
-            DWORD x : 1;
-            DWORD e : 1;
-            DWORD f : 1;
-            DWORD count : 5;
-            DWORD words : 4;
-        } *info = (struct unwind_info *)(addr + func->UnwindData);
-        return func->BeginAddress + info->function_length * 2;
-    }
-#else  /* __aarch64__ */
-    if (func->Flag) return func->BeginAddress + func->FunctionLength * 4;
-    else
-    {
-        struct unwind_info
-        {
-            DWORD function_length : 18;
-            DWORD version : 2;
-            DWORD x : 1;
-            DWORD e : 1;
-            DWORD epilog : 5;
-            DWORD codes : 5;
-        } *info = (struct unwind_info *)(addr + func->UnwindData);
-        return func->BeginAddress + info->function_length * 4;
-    }
-#endif
-}
-
-/**********************************************************************
- *              RtlAddFunctionTable   (NTDLL.@)
- */
-BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_PTR addr )
-{
-    struct dynamic_unwind_entry *entry;
-
-    TRACE( "%p %lu %Ix\n", table, count, addr );
-
-    /* NOTE: Windows doesn't check if table is aligned or a NULL pointer */
-
-    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
-    if (!entry)
-        return FALSE;
-
-    entry->base      = addr;
-    entry->end       = addr + (count ? get_runtime_function_end( &table[count - 1], addr ) : 0);
-    entry->table     = table;
-    entry->count     = count;
-    entry->max_count = 0;
-    entry->callback  = NULL;
-    entry->context   = NULL;
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    list_add_tail( &dynamic_unwind_list, &entry->entry );
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-    return TRUE;
-}
-
-
 /**********************************************************************
  *              RtlInstallFunctionTableCallback   (NTDLL.@)
  */
@@ -595,96 +527,35 @@ BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
 }
 
 
-/* helper for lookup_function_info() */
-static RUNTIME_FUNCTION *find_function_info( ULONG_PTR pc, ULONG_PTR base,
-                                             RUNTIME_FUNCTION *func, ULONG size )
-{
-    int min = 0;
-    int max = size - 1;
-
-    while (min <= max)
-    {
-#ifdef __x86_64__
-        int pos = (min + max) / 2;
-        if (pc < base + func[pos].BeginAddress) max = pos - 1;
-        else if (pc >= base + func[pos].EndAddress) min = pos + 1;
-        else
-        {
-            func += pos;
-            while (func->UnwindData & 1)  /* follow chained entry */
-                func = (RUNTIME_FUNCTION *)(base + (func->UnwindData & ~1));
-            return func;
-        }
-#elif defined(__arm__)
-        int pos = (min + max) / 2;
-        if (pc < base + (func[pos].BeginAddress & ~1)) max = pos - 1;
-        else if (pc >= base + get_runtime_function_end( &func[pos], base )) min = pos + 1;
-        else return func + pos;
-#else  /* __aarch64__ */
-        int pos = (min + max) / 2;
-        if (pc < base + func[pos].BeginAddress) max = pos - 1;
-        else if (pc >= base + get_runtime_function_end( &func[pos], base )) min = pos + 1;
-        else return func + pos;
-#endif
-    }
-    return NULL;
-}
-
 /**********************************************************************
- *           lookup_function_info
+ *              lookup_dynamic_function_table
  */
-RUNTIME_FUNCTION *lookup_function_info( ULONG_PTR pc, ULONG_PTR *base, LDR_DATA_TABLE_ENTRY **module )
+RUNTIME_FUNCTION *lookup_dynamic_function_table( ULONG_PTR pc, ULONG_PTR *base, ULONG *count )
 {
-    RUNTIME_FUNCTION *func = NULL;
     struct dynamic_unwind_entry *entry;
-    ULONG size;
+    RUNTIME_FUNCTION *ret = NULL;
 
-    /* PE module or wine module */
-    if ((func = RtlLookupFunctionTable( pc, base, &size )))
+    RtlEnterCriticalSection( &dynamic_unwind_section );
+    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
     {
-        func = find_function_info( pc, (ULONG_PTR)(*module)->DllBase, func, size/sizeof(*func) );
-    }
-    else
-    {
-        *module = NULL;
-
-        RtlEnterCriticalSection( &dynamic_unwind_section );
-        LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
+        if (pc >= entry->base && pc < entry->end)
         {
-            if (pc >= entry->base && pc < entry->end)
+            *base = entry->base;
+            if (entry->callback)
             {
-                *base = entry->base;
-                /* use callback or lookup in function table */
-                if (entry->callback)
-                    func = entry->callback( pc, entry->context );
-                else
-                    func = find_function_info( pc, entry->base, entry->table, entry->count );
-                break;
+                ret = entry->callback( pc, entry->context );
+                *count = 1;
             }
+            else
+            {
+                ret = entry->table;
+                *count = entry->count;
+            }
+            break;
         }
-        RtlLeaveCriticalSection( &dynamic_unwind_section );
     }
-
-    return func;
-}
-
-/**********************************************************************
- *              RtlLookupFunctionEntry   (NTDLL.@)
- */
-PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
-                                                 UNWIND_HISTORY_TABLE *table )
-{
-    LDR_DATA_TABLE_ENTRY *module;
-    RUNTIME_FUNCTION *func;
-
-    /* FIXME: should use the history table to make things faster */
-
-    if (!(func = lookup_function_info( pc, base, &module )))
-    {
-        *base = 0;
-        WARN( "no exception table found for %Ix\n", pc );
-    }
-    return func;
+    RtlLeaveCriticalSection( &dynamic_unwind_section );
+    return ret;
 }
 
 #endif  /* __x86_64__ || __arm__ || __aarch64__ */
