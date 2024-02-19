@@ -1933,20 +1933,18 @@ static void shader_none_select_compute(void *shader_priv, struct wined3d_context
         const struct wined3d_state *state) {}
 static void shader_none_update_float_vertex_constants(struct wined3d_device *device, UINT start, UINT count) {}
 static void shader_none_update_float_pixel_constants(struct wined3d_device *device, UINT start, UINT count) {}
-static void shader_none_load_constants(void *shader_priv, struct wined3d_context *context,
-        const struct wined3d_state *state) {}
 static void shader_none_destroy(struct wined3d_shader *shader) {}
 static void shader_none_free_context_data(struct wined3d_context *context) {}
 static void shader_none_init_context_state(struct wined3d_context *context) {}
 
 /* Context activation is done by the caller. */
-static void shader_none_select(void *shader_priv, struct wined3d_context *context,
+static void shader_none_apply_draw_state(void *shader_priv, struct wined3d_context *context,
         const struct wined3d_state *state)
 {
     struct shader_none_priv *priv = shader_priv;
 
-    priv->vertex_pipe->vp_enable(context, !use_vs(state));
-    priv->fragment_pipe->fp_enable(context, !use_ps(state));
+    priv->vertex_pipe->vp_apply_draw_state(context, state);
+    priv->fragment_pipe->fp_apply_draw_state(context, state);
 }
 
 /* Context activation is done by the caller. */
@@ -1954,8 +1952,8 @@ static void shader_none_disable(void *shader_priv, struct wined3d_context *conte
 {
     struct shader_none_priv *priv = shader_priv;
 
-    priv->vertex_pipe->vp_enable(context, FALSE);
-    priv->fragment_pipe->fp_enable(context, FALSE);
+    priv->vertex_pipe->vp_disable(context);
+    priv->fragment_pipe->fp_disable(context);
 
     context->shader_update_mask = (1u << WINED3D_SHADER_TYPE_PIXEL)
             | (1u << WINED3D_SHADER_TYPE_VERTEX)
@@ -2036,12 +2034,11 @@ const struct wined3d_shader_backend_ops none_shader_backend =
 {
     shader_none_handle_instruction,
     shader_none_precompile,
-    shader_none_select,
+    shader_none_apply_draw_state,
     shader_none_select_compute,
     shader_none_disable,
     shader_none_update_float_vertex_constants,
     shader_none_update_float_pixel_constants,
-    shader_none_load_constants,
     shader_none_destroy,
     shader_none_alloc,
     shader_none_free,

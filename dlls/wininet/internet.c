@@ -89,6 +89,21 @@ typedef struct
     LPWSTR autoconf_url;
 } proxyinfo_t;
 
+#define CONNECTION_SETTINGS_VERSION 0x46
+typedef struct {
+    DWORD version;
+    DWORD id;
+    DWORD flags;
+    BYTE data[1];
+    /* DWORD proxy_server_len; */
+    /* UTF8 proxy_server[proxy_server_len]; */
+    /* DWORD bypass_list_len; */
+    /* UTF8 bypass_list[bypass_list_len]; */
+    /* DWORD configuration_script_len; */
+    /* UTF8 configuration_script[configuration_script_len]; */
+    /* DWORD unk[8]; set to 0 */
+} connection_settings;
+
 static ULONG max_conns = 2, max_1_0_conns = 4;
 static ULONG connect_timeout = 60000;
 
@@ -316,6 +331,48 @@ HRESULT WINAPI DllInstall(BOOL bInstall, LPCWSTR cmdline)
     return S_OK;
 }
 
+static void connection_settings_write( connection_settings *settings, DWORD *pos, DWORD size, const WCHAR *str )
+{
+    int len = 0;
+
+    if (str)
+    {
+        len = wcslen( str );
+        len = WideCharToMultiByte( CP_UTF8, 0, str, len, settings ? (char*)settings->data + *pos + sizeof(len) : NULL,
+                settings ? size - *pos - sizeof(len) : 0, NULL, NULL );
+    }
+    if (settings)
+        memcpy(settings->data + *pos, &len, sizeof(len));
+    *pos += sizeof(len) + len;
+}
+
+static LONG save_connection_settings( HKEY key, const WCHAR *connection, proxyinfo_t *lpwpi )
+{
+    connection_settings *settings;
+    DWORD size = 0, pos = 0;
+    LONG ret;
+
+    connection_settings_write( NULL, &size, 0, lpwpi->proxy );
+    connection_settings_write( NULL, &size, 0, lpwpi->proxyBypass );
+    connection_settings_write( NULL, &size, 0, lpwpi->autoconf_url );
+    size += sizeof(DWORD) * 10; /* unknown fields */
+
+    settings = calloc( 1, FIELD_OFFSET(connection_settings, data[size]) );
+    if (!settings)
+        return ERROR_OUTOFMEMORY;
+
+    settings->version = CONNECTION_SETTINGS_VERSION;
+    settings->flags = lpwpi->flags;
+    connection_settings_write( settings, &pos, size, lpwpi->proxy );
+    connection_settings_write( settings, &pos, size, lpwpi->proxyBypass );
+    connection_settings_write( settings, &pos, size, lpwpi->autoconf_url );
+
+    ret = RegSetValueExW(key, connection, 0, REG_BINARY, (BYTE*)settings,
+            FIELD_OFFSET(connection_settings, data[size]));
+    free(settings);
+    return ret;
+}
+
 /***********************************************************************
  *           INTERNET_SaveProxySettings
  *
@@ -326,12 +383,25 @@ HRESULT WINAPI DllInstall(BOOL bInstall, LPCWSTR cmdline)
  */
 static LONG INTERNET_SaveProxySettings( proxyinfo_t *lpwpi )
 {
-    HKEY key;
+    HKEY key, con;
     DWORD val;
     LONG ret;
 
     if ((ret = RegOpenKeyW( HKEY_CURRENT_USER, szInternetSettings, &key )))
         return ret;
+
+    if ((ret = RegCreateKeyExW( key, L"Connections", 0, NULL, 0, KEY_WRITE, NULL, &con, NULL )))
+    {
+        RegCloseKey( key );
+        return ret;
+    }
+    ret = save_connection_settings( con, L"DefaultConnectionSettings", lpwpi );
+    RegCloseKey( con );
+    if (ret)
+    {
+        RegCloseKey( key );
+        return ret;
+    }
 
     val = !!(lpwpi->flags & PROXY_TYPE_PROXY);
     if ((ret = RegSetValueExW( key, L"ProxyEnable", 0, REG_DWORD, (BYTE*)&val, sizeof(DWORD))))
@@ -573,6 +643,79 @@ static WCHAR *get_http_proxy( const WCHAR *proxy )
     return ret;
 }
 
+static LONG connection_settings_read( const connection_settings *settings, DWORD *pos, DWORD size, WCHAR **str)
+{
+    int len, wlen;
+
+    *str = NULL;
+    if (*pos + sizeof(int) >= size)
+        return ERROR_SUCCESS;
+    memcpy( &len, settings->data + *pos, sizeof(int) );
+    *pos += sizeof(int);
+
+    if (*pos + len >= size)
+    {
+        *pos = size;
+        return ERROR_SUCCESS;
+    }
+    wlen = MultiByteToWideChar( CP_UTF8, 0, (const char *)settings->data + *pos, len, NULL, 0 );
+    if (wlen)
+    {
+        *str = malloc( (wlen + 1) * sizeof(WCHAR) );
+        if (!*str)
+        {
+            *pos = size;
+            return ERROR_OUTOFMEMORY;
+        }
+        MultiByteToWideChar( CP_UTF8, 0, (const char *)settings->data + *pos, len, *str, wlen );
+        (*str)[wlen] = 0;
+        *pos += len;
+    }
+    return ERROR_SUCCESS;
+}
+
+static LONG load_connection_settings( HKEY key, const WCHAR *connection, proxyinfo_t *lpwpi )
+{
+    connection_settings *settings = NULL;
+    DWORD type, pos, size = 0;
+    LONG res;
+
+    while ((res = RegQueryValueExW( key, connection, NULL, &type, (BYTE*)settings, &size )) == ERROR_MORE_DATA ||
+            (!res && !settings))
+    {
+        connection_settings *new_settings = realloc(settings, size);
+        if(!new_settings)
+        {
+            free( settings );
+            return ERROR_OUTOFMEMORY;
+        }
+        settings = new_settings;
+    }
+
+    memset(lpwpi, 0, sizeof(*lpwpi));
+    if (res || type != REG_BINARY || size < FIELD_OFFSET( connection_settings, data ))
+    {
+        lpwpi->flags |= PROXY_TYPE_DIRECT | PROXY_TYPE_AUTO_DETECT;
+        free( settings );
+        return ERROR_SUCCESS;
+    }
+
+    lpwpi->flags = settings->flags;
+    size -= FIELD_OFFSET( connection_settings, data );
+    pos = 0;
+    res = connection_settings_read( settings, &pos, size, &lpwpi->proxy );
+    if (!res)
+        res = connection_settings_read( settings, &pos, size, &lpwpi->proxyBypass );
+    if (!res)
+        res = connection_settings_read( settings, &pos, size, &lpwpi->autoconf_url );
+    if (res)
+    {
+        FreeProxyInfo( lpwpi );
+        return res;
+    }
+    return ERROR_SUCCESS;
+}
+
 /***********************************************************************
  *          INTERNET_LoadProxySettings
  *
@@ -587,7 +730,7 @@ static WCHAR *get_http_proxy( const WCHAR *proxy )
 static LONG INTERNET_LoadProxySettings( proxyinfo_t *lpwpi )
 {
     DWORD type, len, val;
-    HKEY key;
+    HKEY key, con;
     LONG ret;
 
     memset( lpwpi, 0, sizeof(*lpwpi) );
@@ -595,19 +738,30 @@ static LONG INTERNET_LoadProxySettings( proxyinfo_t *lpwpi )
     if ((ret = RegOpenKeyW( HKEY_CURRENT_USER, szInternetSettings, &key )))
         return ret;
 
+    if (!(ret = RegOpenKeyW( key, L"Connections", &con )))
+    {
+        load_connection_settings( con, L"DefaultConnectionSettings", lpwpi );
+        RegCloseKey( con );
+    }
+
     len = sizeof(DWORD);
     if (RegQueryValueExW( key, L"ProxyEnable", NULL, &type, (BYTE *)&val, &len ) || type != REG_DWORD)
     {
-        val = 0;
+        val = !!(lpwpi->flags & PROXY_TYPE_PROXY);
         if((ret = RegSetValueExW( key, L"ProxyEnable", 0, REG_DWORD, (BYTE *)&val, sizeof(DWORD) )))
         {
             RegCloseKey( key );
+            FreeProxyInfo( lpwpi );
             return ret;
         }
     }
+    else if (val)
+    {
+        lpwpi->flags |= PROXY_TYPE_PROXY;
+    }
     else
     {
-        lpwpi->flags |= (val ? PROXY_TYPE_PROXY : PROXY_TYPE_DIRECT);
+        lpwpi->flags &= ~PROXY_TYPE_PROXY;
     }
 
     /* figure out how much memory the proxy setting takes */
@@ -618,12 +772,18 @@ static LONG INTERNET_LoadProxySettings( proxyinfo_t *lpwpi )
         if (!(szProxy = malloc( len )))
         {
             RegCloseKey( key );
+            FreeProxyInfo( lpwpi );
             return ERROR_OUTOFMEMORY;
         }
         RegQueryValueExW( key, L"ProxyServer", NULL, &type, (BYTE*)szProxy, &len );
 
+        free( lpwpi->proxy );
         lpwpi->proxy = szProxy;
-        TRACE("proxy server (from registry%s) = %s\n", lpwpi->flags & PROXY_TYPE_PROXY ? "" : ", disabled",
+    }
+
+    if (lpwpi->proxy)
+    {
+        TRACE("proxy (from registry%s) = %s\n", lpwpi->flags & PROXY_TYPE_PROXY ? "" : ", disabled",
                 debugstr_w(lpwpi->proxy));
     }
     else
@@ -643,6 +803,7 @@ static LONG INTERNET_LoadProxySettings( proxyinfo_t *lpwpi )
         }
         RegQueryValueExW( key, L"ProxyOverride", NULL, &type, (BYTE*)szProxy, &len );
 
+        free( lpwpi->proxyBypass );
         lpwpi->proxyBypass = szProxy;
         TRACE("http proxy bypass (from registry) = %s\n", debugstr_w(lpwpi->proxyBypass));
     }
@@ -664,6 +825,7 @@ static LONG INTERNET_LoadProxySettings( proxyinfo_t *lpwpi )
         RegQueryValueExW( key, L"AutoConfigURL", NULL, &type, (BYTE*)autoconf_url, &len );
 
         lpwpi->flags |= PROXY_TYPE_AUTO_PROXY_URL;
+        free( lpwpi->autoconf_url );
         lpwpi->autoconf_url = autoconf_url;
         TRACE("AutoConfigURL = %s\n", debugstr_w(lpwpi->autoconf_url));
     }
@@ -2606,7 +2768,7 @@ static WCHAR *copy_optionW(WCHAR *value)
         return NULL;
 
     len = (wcslen(value) + 1) * sizeof(WCHAR);
-    if (!(tmp = HeapAlloc(GetProcessHeap(), 0, len)))
+    if (!(tmp = GlobalAlloc(0, len)))
         return NULL;
 
     return memcpy(tmp, value, len);
@@ -2620,8 +2782,8 @@ static char *copy_optionA(WCHAR *value)
     if (!value)
         return NULL;
 
-    len = wcslen(value) * 3 + 1;
-    if (!(tmp = HeapAlloc(GetProcessHeap(), 0, len)))
+    len = WideCharToMultiByte(CP_ACP, 0, value, -1, NULL, 0, NULL, NULL);
+    if (!(tmp = GlobalAlloc(0, len)))
         return NULL;
 
     WideCharToMultiByte(CP_ACP, 0, value, -1, tmp, len, NULL, NULL);

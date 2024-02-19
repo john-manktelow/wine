@@ -622,7 +622,7 @@ static void shader_arb_vs_local_constants(const struct arb_vs_compiled_shader *g
     checkGLcall("Load vs int consts");
 }
 
-static void shader_arb_select(void *shader_priv, struct wined3d_context *context,
+static void shader_arb_apply_draw_state(void *shader_priv, struct wined3d_context *context,
         const struct wined3d_state *state);
 
 /**
@@ -650,7 +650,7 @@ static void shader_arb_load_constants_internal(struct shader_arb_priv *priv, str
                 && (vshader->reg_maps.integer_constants & ~vshader->reg_maps.local_int_consts))))
         {
             TRACE("bool/integer vertex shader constants potentially modified, forcing shader reselection.\n");
-            shader_arb_select(priv, &context_gl->c, state);
+            shader_arb_apply_draw_state(priv, &context_gl->c, state);
         }
         else if (pshader
                 && (pshader->reg_maps.boolean_constants
@@ -658,7 +658,7 @@ static void shader_arb_load_constants_internal(struct shader_arb_priv *priv, str
                 && (pshader->reg_maps.integer_constants & ~pshader->reg_maps.local_int_consts))))
         {
             TRACE("bool/integer pixel shader constants potentially modified, forcing shader reselection.\n");
-            shader_arb_select(priv, &context_gl->c, state);
+            shader_arb_apply_draw_state(priv, &context_gl->c, state);
         }
     }
 
@@ -712,13 +712,6 @@ static void shader_arb_load_constants_internal(struct shader_arb_priv *priv, str
         if (context_gl->c.constant_update_mask & WINED3D_SHADER_CONST_PS_NP2_FIXUP)
             shader_arb_load_np2fixup_constants(&gl_shader->np2fixup_info, gl_info, state);
     }
-}
-
-static void shader_arb_load_constants(void *shader_priv, struct wined3d_context *context,
-        const struct wined3d_state *state)
-{
-    shader_arb_load_constants_internal(shader_priv, wined3d_context_gl(context),
-            state, use_ps(state), use_vs(state), FALSE);
 }
 
 static void shader_arb_update_float_vertex_constants(struct wined3d_device *device, UINT start, UINT count)
@@ -4614,12 +4607,11 @@ static void find_arb_vs_compile_args(const struct wined3d_state *state,
 }
 
 /* Context activation is done by the caller. */
-static void shader_arb_select(void *shader_priv, struct wined3d_context *context,
-        const struct wined3d_state *state)
+static void shader_arb_update_graphics_shaders(struct shader_arb_priv *priv,
+        struct wined3d_context *context, const struct wined3d_state *state)
 {
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    struct shader_arb_priv *priv = shader_priv;
     int i;
 
     /* Deal with pixel shaders first so the vertex shader arg function has the input signature ready */
@@ -4638,7 +4630,7 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
         GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, compiled->prgId));
         checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, compiled->prgId);");
 
-        priv->fragment_pipe->fp_enable(context, FALSE);
+        priv->fragment_pipe->fp_apply_draw_state(context, state);
 
         /* Enable OpenGL fragment programs. Note that we may have already
          * disabled them when disabling the fragment pipeline. */
@@ -4659,7 +4651,7 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
                 priv->pshader_const_dirty[i] = 1;
             }
             /* Also takes care of loading local constants */
-            shader_arb_load_constants_internal(shader_priv, context_gl, state, TRUE, FALSE, TRUE);
+            shader_arb_load_constants_internal(priv, context_gl, state, TRUE, FALSE, TRUE);
         }
         else
         {
@@ -4673,6 +4665,8 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
 
         if (ps->load_local_constsF)
             context->constant_update_mask |= WINED3D_SHADER_CONST_PS_F;
+
+        context->last_was_pshader = TRUE;
     }
     else
     {
@@ -4685,7 +4679,7 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
             gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
             checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
         }
-        priv->fragment_pipe->fp_enable(context, TRUE);
+        priv->fragment_pipe->fp_apply_draw_state(context, state);
     }
 
     if (use_vs(state))
@@ -4714,7 +4708,7 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
         GL_EXTCALL(glBindProgramARB(GL_VERTEX_PROGRAM_ARB, compiled->prgId));
         checkGLcall("glBindProgramARB(GL_VERTEX_PROGRAM_ARB, compiled->prgId);");
 
-        priv->vertex_pipe->vp_enable(context, FALSE);
+        priv->vertex_pipe->vp_apply_draw_state(context, state);
 
         /* Enable OpenGL vertex programs */
         gl_info->gl_ops.gl.p_glEnable(GL_VERTEX_PROGRAM_ARB);
@@ -4744,8 +4738,21 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
             gl_info->gl_ops.gl.p_glDisable(GL_VERTEX_PROGRAM_ARB);
             checkGLcall("glDisable(GL_VERTEX_PROGRAM_ARB)");
         }
-        priv->vertex_pipe->vp_enable(context, TRUE);
+        priv->vertex_pipe->vp_apply_draw_state(context, state);
     }
+}
+
+static void shader_arb_apply_draw_state(void *shader_priv, struct wined3d_context *context,
+        const struct wined3d_state *state)
+{
+    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
+    struct shader_arb_priv *priv = shader_priv;
+
+    if (context->shader_update_mask & ~(1u << WINED3D_SHADER_TYPE_COMPUTE))
+        shader_arb_update_graphics_shaders(priv, context, state);
+
+    if (context->constant_update_mask)
+        shader_arb_load_constants_internal(priv, context_gl, state, use_ps(state), use_vs(state), FALSE);
 }
 
 static void shader_arb_select_compute(void *shader_priv, struct wined3d_context *context,
@@ -4766,14 +4773,14 @@ static void shader_arb_disable(void *shader_priv, struct wined3d_context *contex
         gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
         checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
     }
-    priv->fragment_pipe->fp_enable(context, FALSE);
+    priv->fragment_pipe->fp_disable(context);
 
     if (gl_info->supported[ARB_VERTEX_PROGRAM])
     {
         gl_info->gl_ops.gl.p_glDisable(GL_VERTEX_PROGRAM_ARB);
         checkGLcall("glDisable(GL_VERTEX_PROGRAM_ARB)");
     }
-    priv->vertex_pipe->vp_enable(context, FALSE);
+    priv->vertex_pipe->vp_disable(context);
 
     if (gl_info->supported[ARB_COLOR_BUFFER_FLOAT] && priv->last_vs_color_unclamp)
     {
@@ -5703,12 +5710,11 @@ const struct wined3d_shader_backend_ops arb_program_shader_backend =
 {
     shader_arb_handle_instruction,
     shader_arb_precompile,
-    shader_arb_select,
+    shader_arb_apply_draw_state,
     shader_arb_select_compute,
     shader_arb_disable,
     shader_arb_update_float_vertex_constants,
     shader_arb_update_float_pixel_constants,
-    shader_arb_load_constants,
     shader_arb_destroy,
     shader_arb_alloc,
     shader_arb_free,
@@ -5735,21 +5741,12 @@ struct arbfp_ffp_desc
     GLuint shader;
 };
 
-/* Context activation is done by the caller. */
-static void arbfp_enable(const struct wined3d_context *context, BOOL enable)
+static void arbfp_disable(const struct wined3d_context *context)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl_const(context)->gl_info;
 
-    if (enable)
-    {
-        gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_PROGRAM_ARB);
-        checkGLcall("glEnable(GL_FRAGMENT_PROGRAM_ARB)");
-    }
-    else
-    {
-        gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
-        checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
-    }
+    gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
+    checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
 }
 
 static void *arbfp_alloc(const struct wined3d_shader_backend_ops *shader_backend, void *shader_priv)
@@ -6604,70 +6601,64 @@ static GLuint gen_arbfp_ffp_shader(const struct ffp_frag_settings *settings, con
 
 static void fragment_prog_arbfp(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
+    if (use_ps(state) && !context->last_was_pshader && context->device->shader_backend == &arb_program_shader_backend)
+    {
+        /* Reload pixel shader constants since they collide with the
+         * fixed function constants. */
+        context->constant_update_mask |= WINED3D_SHADER_CONST_PS_F;
+    }
+
+    context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_PIXEL;
+}
+
+static void arbfp_update_shader(struct wined3d_context *context, const struct wined3d_state *state)
+{
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     const struct wined3d_device *device = context->device;
     struct shader_arb_priv *priv = device->fragment_priv;
-    BOOL use_pshader = use_ps(state);
     struct ffp_frag_settings settings;
     const struct arbfp_ffp_desc *desc;
     unsigned int i;
 
-    TRACE("context %p, state %p, state_id %#lx.\n", context, state, state_id);
-
-    if (!use_pshader)
+    /* Find or create a shader implementing the fixed function pipeline
+     * settings, then activate it. */
+    wined3d_ffp_get_fs_settings(context, state, &settings, FALSE);
+    desc = (const struct arbfp_ffp_desc *)find_ffp_frag_shader(&priv->fragment_shaders, &settings);
+    if (!desc)
     {
-        /* Find or create a shader implementing the fixed function pipeline
-         * settings, then activate it. */
-        wined3d_ffp_get_fs_settings(context, state, &settings, FALSE);
-        desc = (const struct arbfp_ffp_desc *)find_ffp_frag_shader(&priv->fragment_shaders, &settings);
-        if (!desc)
+        struct arbfp_ffp_desc *new_desc;
+
+        if (!(new_desc = heap_alloc(sizeof(*new_desc))))
         {
-            struct arbfp_ffp_desc *new_desc;
-
-            if (!(new_desc = heap_alloc(sizeof(*new_desc))))
-            {
-                ERR("Out of memory\n");
-                return;
-            }
-
-            new_desc->parent.settings = settings;
-            new_desc->shader = gen_arbfp_ffp_shader(&settings, gl_info);
-            add_ffp_frag_shader(&priv->fragment_shaders, &new_desc->parent);
-            TRACE("Allocated fixed function replacement shader descriptor %p\n", new_desc);
-            desc = new_desc;
+            ERR("Out of memory\n");
+            return;
         }
 
-        /* Now activate the replacement program. GL_FRAGMENT_PROGRAM_ARB is already active (however, note the
-         * comment above the shader_select call below). If e.g. GLSL is active, the shader_select call will
-         * deactivate it.
-         */
-        GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader));
-        checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader)");
-
-        if (device->shader_backend == &arb_program_shader_backend && context->last_was_pshader)
-        {
-            /* Reload fixed function constants since they collide with the
-             * pixel shader constants. */
-            for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
-            {
-                set_bumpmat_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_BUMPENV_MAT00));
-                state_tss_constant_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_CONSTANT));
-            }
-            state_texfactor_arbfp(context, state, STATE_RENDER(WINED3D_RS_TEXTUREFACTOR));
-            state_arb_specularenable(context, state, STATE_RENDER(WINED3D_RS_SPECULARENABLE));
-            color_key_arbfp(context, state, STATE_COLOR_KEY);
-        }
-        context->last_was_pshader = FALSE;
+        new_desc->parent.settings = settings;
+        new_desc->shader = gen_arbfp_ffp_shader(&settings, gl_info);
+        add_ffp_frag_shader(&priv->fragment_shaders, &new_desc->parent);
+        TRACE("Allocated fixed function replacement shader descriptor %p\n", new_desc);
+        desc = new_desc;
     }
-    else if (!context->last_was_pshader)
+
+    GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader));
+    checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader)");
+
+    if (device->shader_backend == &arb_program_shader_backend && context->last_was_pshader)
     {
-        if (device->shader_backend == &arb_program_shader_backend)
-            context->constant_update_mask |= WINED3D_SHADER_CONST_PS_F;
-        context->last_was_pshader = TRUE;
+        /* Reload fixed function constants since they collide with the
+         * pixel shader constants. */
+        for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
+        {
+            set_bumpmat_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_BUMPENV_MAT00));
+            state_tss_constant_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_CONSTANT));
+        }
+        state_texfactor_arbfp(context, state, STATE_RENDER(WINED3D_RS_TEXTUREFACTOR));
+        state_arb_specularenable(context, state, STATE_RENDER(WINED3D_RS_SPECULARENABLE));
+        color_key_arbfp(context, state, STATE_COLOR_KEY);
     }
-
-    context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_PIXEL;
+    context->last_was_pshader = FALSE;
 }
 
 /* We can't link the fog states to the fragment state directly since the
@@ -6892,17 +6883,36 @@ static void arbfp_free_context_data(struct wined3d_context *context)
 {
 }
 
+static void arbfp_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state)
+{
+    const struct wined3d_gl_info *gl_info = wined3d_context_gl_const(context)->gl_info;
+
+    if (use_ps(state))
+    {
+        gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
+        checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
+        return;
+    }
+
+    gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_PROGRAM_ARB);
+    checkGLcall("glEnable(GL_FRAGMENT_PROGRAM_ARB)");
+
+    if (context->shader_update_mask & (1u << WINED3D_SHADER_TYPE_PIXEL))
+        arbfp_update_shader(context, state);
+}
+
 const struct wined3d_fragment_pipe_ops arbfp_fragment_pipeline =
 {
-    arbfp_enable,
-    arbfp_get_caps,
-    arbfp_get_emul_mask,
-    arbfp_alloc,
-    arbfp_free,
-    arbfp_alloc_context_data,
-    arbfp_free_context_data,
-    shader_arb_color_fixup_supported,
-    arbfp_fragmentstate_template,
+    .fp_apply_draw_state = arbfp_apply_draw_state,
+    .fp_disable = arbfp_disable,
+    .get_caps = arbfp_get_caps,
+    .get_emul_mask = arbfp_get_emul_mask,
+    .alloc_private = arbfp_alloc,
+    .free_private = arbfp_free,
+    .allocate_context_data = arbfp_alloc_context_data,
+    .free_context_data = arbfp_free_context_data,
+    .color_fixup_supported = shader_arb_color_fixup_supported,
+    .states = arbfp_fragmentstate_template,
 };
 
 struct arbfp_blit_type
