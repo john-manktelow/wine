@@ -362,6 +362,7 @@ static void sync_window_style( struct x11drv_win_data *data )
         int mask = get_window_attributes( data, &attr );
 
         XChangeWindowAttributes( data->display, data->whole_window, mask, &attr );
+        x11drv_xinput2_enable( data->display, data->whole_window );
     }
 }
 
@@ -1588,24 +1589,6 @@ Window get_dummy_parent(void)
 
 
 /**********************************************************************
- *		create_dummy_client_window
- */
-Window create_dummy_client_window(void)
-{
-    XSetWindowAttributes attr;
-
-    attr.colormap = default_colormap;
-    attr.bit_gravity = NorthWestGravity;
-    attr.win_gravity = NorthWestGravity;
-    attr.backing_store = NotUseful;
-    attr.border_pixel = 0;
-
-    return XCreateWindow( gdi_display, get_dummy_parent(), 0, 0, 1, 1, 0,
-                          default_visual.depth, InputOutput, default_visual.visual,
-                          CWBitGravity | CWWinGravity | CWBackingStore | CWColormap | CWBorderPixel, &attr );
-}
-
-/**********************************************************************
  *		create_client_window
  */
 Window create_client_window( HWND hwnd, const XVisualInfo *visual )
@@ -1718,6 +1701,7 @@ static void create_whole_window( struct x11drv_win_data *data )
                                         data->vis.visual, mask, &attr );
     if (!data->whole_window) goto done;
 
+    x11drv_xinput2_enable( data->display, data->whole_window );
     set_initial_wm_hints( data->display, data->whole_window );
     set_wm_hints( data );
 
@@ -1760,7 +1744,12 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
             Window xwin = (Window)NtUserGetProp( data->hwnd, foreign_window_prop );
             if (xwin)
             {
-                if (!already_destroyed) XSelectInput( data->display, xwin, 0 );
+                if (!already_destroyed)
+                {
+                    x11drv_xinput2_disable( data->display, xwin );
+                    XSelectInput( data->display, xwin, 0 );
+                }
+
                 XDeleteContext( data->display, xwin, winContext );
                 NtUserRemoveProp( data->hwnd, foreign_window_prop );
             }
@@ -1809,15 +1798,16 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
  */
 void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha )
 {
+    BOOL same_visual = (data->vis.visualid == vis->visualid);
     Window client_window = data->client_window;
     Window whole_window = data->whole_window;
 
-    if (!data->use_alpha == !use_alpha) return;
+    if (!data->use_alpha == !use_alpha && same_visual) return;
     if (data->surface) window_surface_release( data->surface );
     data->surface = NULL;
     data->use_alpha = use_alpha;
 
-    if (data->vis.visualid == vis->visualid) return;
+    if (same_visual) return;
     data->client_window = 0;
     destroy_whole_window( data, client_window != 0 /* don't destroy whole_window until reparented */ );
     data->vis = *vis;

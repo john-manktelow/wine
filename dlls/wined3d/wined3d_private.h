@@ -45,7 +45,6 @@
 #include "winternl.h"
 #include "ddk/d3dkmthk.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 #include "objbase.h"
 #include "wine/wined3d.h"
@@ -55,6 +54,18 @@
 static inline size_t align(size_t addr, size_t alignment)
 {
     return (addr + (alignment - 1)) & ~(alignment - 1);
+}
+
+static inline uint32_t float_to_int(float f)
+{
+    union
+    {
+        uint32_t u;
+        float f;
+    } u;
+
+    u.f = f;
+    return u.u;
 }
 
 static inline float int_to_float(uint32_t i)
@@ -1544,7 +1555,7 @@ struct wined3d_shader_backend_ops
     void (*shader_precompile)(void *shader_priv, struct wined3d_shader *shader);
     void (*shader_apply_draw_state)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
-    void (*shader_select_compute)(void *shader_priv, struct wined3d_context *context,
+    void (*shader_apply_compute_state)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
     void (*shader_disable)(void *shader_priv, struct wined3d_context *context);
     void (*shader_update_float_vertex_constants)(struct wined3d_device *device, UINT start, UINT count);
@@ -1956,7 +1967,9 @@ struct wined3d_context
     DWORD destroyed : 1;
     DWORD destroy_delayed : 1;
     DWORD namedArraysLoaded : 1;
-    DWORD padding : 5;
+    DWORD update_primitive_type : 1;
+    DWORD update_patch_vertex_count : 1;
+    DWORD padding : 3;
 
     DWORD clip_distance_mask : 8; /* WINED3D_MAX_CLIP_DISTANCES, 8 */
 
@@ -3409,7 +3422,7 @@ static inline void *wined3d_texture_allocate_object_memory(SIZE_T s, SIZE_T leve
     if (level_count > ((~(SIZE_T)0 - s) / sizeof(*t->sub_resources)) / layer_count)
         return NULL;
 
-    return heap_alloc_zero(s + level_count * layer_count * sizeof(*t->sub_resources));
+    return calloc(1, s + level_count * layer_count * sizeof(*t->sub_resources));
 }
 
 static inline struct wined3d_texture *texture_from_resource(struct wined3d_resource *resource)
@@ -4146,7 +4159,7 @@ struct wined3d_shader_limits
 #define wined3d_lock_init(lock, name) wined3d_lock_init_(lock, __FILE__ ": " name)
 static inline void wined3d_lock_init_(CRITICAL_SECTION *lock, const char *name)
 {
-    InitializeCriticalSection(lock);
+    InitializeCriticalSectionEx(lock, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     if (lock->DebugInfo != (RTL_CRITICAL_SECTION_DEBUG *)-1)
         lock->DebugInfo->Spare[0] = (DWORD_PTR)name;
 }

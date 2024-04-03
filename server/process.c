@@ -684,6 +684,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     process->rawinput_mouse  = NULL;
     process->rawinput_kbd    = NULL;
     memset( &process->image_info, 0, sizeof(process->image_info) );
+    list_init( &process->rawinput_entry );
     list_init( &process->kernel_object );
     list_init( &process->thread_list );
     list_init( &process->locks );
@@ -710,7 +711,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     if (!parent)
     {
         process->handles = alloc_handle_table( process, 0 );
-        process->token = token_create_admin( TRUE, -1, TokenElevationTypeFull, default_session_id );
+        process->token = token_create_admin( TRUE, -1, TokenElevationTypeLimited, default_session_id );
         process->affinity = ~0;
     }
     else
@@ -784,6 +785,7 @@ static void process_destroy( struct object *obj )
     if (process->idle_event) release_object( process->idle_event );
     if (process->id) free_ptid( process->id );
     if (process->token) release_object( process->token );
+    list_remove( &process->rawinput_entry );
     free( process->rawinput_devices );
     free( process->dir_cache );
     free( process->image );
@@ -1133,7 +1135,7 @@ DECL_HANDLER(new_process)
 {
     struct startup_info *info;
     const void *info_ptr;
-    struct unicode_str name;
+    struct unicode_str name, desktop_path = {0};
     const struct security_descriptor *sd;
     const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
     struct process *process = NULL;
@@ -1276,7 +1278,9 @@ DECL_HANDLER(new_process)
         FIXUP_LEN( info->data->imagepath_len );
         FIXUP_LEN( info->data->cmdline_len );
         FIXUP_LEN( info->data->title_len );
+        desktop_path.str = (WCHAR *)((char *)info->data + pos);
         FIXUP_LEN( info->data->desktop_len );
+        desktop_path.len = info->data->desktop_len;
         FIXUP_LEN( info->data->shellinfo_len );
         FIXUP_LEN( info->data->runtime_len );
 #undef FIXUP_LEN
@@ -1327,7 +1331,7 @@ DECL_HANDLER(new_process)
     }
 
     /* connect to the window station */
-    connect_process_winstation( process, parent_thread, parent );
+    connect_process_winstation( process, &desktop_path, parent_thread, parent );
 
     /* inherit the process console, but keep pseudo handles (< 0), and 0 (= not attached to a console) as is */
     if ((int)info->data->console > 0)
@@ -1548,7 +1552,7 @@ DECL_HANDLER(get_process_vm_counters)
         char proc_path[32], line[256];
         unsigned long value;
 
-        sprintf( proc_path, "/proc/%u/status", process->unix_pid );
+        snprintf( proc_path, sizeof(proc_path), "/proc/%u/status", process->unix_pid );
         if ((f = fopen( proc_path, "r" )))
         {
             while (fgets( line, sizeof(line), f ))
@@ -1622,6 +1626,16 @@ DECL_HANDLER(set_process_info)
     {
         if (req->mask & SET_PROCESS_INFO_PRIORITY) process->priority = req->priority;
         if (req->mask & SET_PROCESS_INFO_AFFINITY) set_process_affinity( process, req->affinity );
+        if (req->mask & SET_PROCESS_INFO_TOKEN)
+        {
+            struct token *token;
+
+            if ((token = get_token_obj( current->process, req->token, TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY )))
+            {
+                release_object( process->token );
+                process->token = token;
+            }
+        }
         release_object( process );
     }
 }
@@ -1657,7 +1671,6 @@ DECL_HANDLER(write_process_memory)
     {
         data_size_t len = get_req_data_size();
         if (len) write_process_memory( process, req->addr, len, get_req_data() );
-        else set_error( STATUS_INVALID_PARAMETER );
         release_object( process );
     }
 }

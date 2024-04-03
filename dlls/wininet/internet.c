@@ -110,6 +110,8 @@ static ULONG connect_timeout = 60000;
 static const WCHAR szInternetSettings[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
 
+static WCHAR *get_proxy_autoconfig_url(void);
+
 void *alloc_object(object_header_t *parent, const object_vtbl_t *vtbl, size_t size)
 {
     UINT_PTR handle = 0, num;
@@ -446,7 +448,7 @@ static LONG INTERNET_SaveProxySettings( proxyinfo_t *lpwpi )
         }
     }
 
-    if (lpwpi->autoconf_url)
+    if (lpwpi->autoconf_url && lpwpi->flags & PROXY_TYPE_AUTO_PROXY_URL)
     {
         if ((ret = RegSetValueExW( key, L"AutoConfigURL", 0, REG_SZ, (BYTE*)lpwpi->autoconf_url,
                         sizeof(WCHAR) * (lstrlenW(lpwpi->autoconf_url) + 1))))
@@ -708,6 +710,7 @@ static LONG load_connection_settings( HKEY key, const WCHAR *connection, proxyin
         res = connection_settings_read( settings, &pos, size, &lpwpi->proxyBypass );
     if (!res)
         res = connection_settings_read( settings, &pos, size, &lpwpi->autoconf_url );
+    free( settings );
     if (res)
     {
         FreeProxyInfo( lpwpi );
@@ -985,6 +988,37 @@ static VOID APPINFO_Destroy(object_header_t *hdr)
     free(lpwai->proxyPassword);
 }
 
+static WCHAR *copy_optionW(WCHAR *value)
+{
+    DWORD len;
+    void *tmp;
+
+    if (!value)
+        return NULL;
+
+    len = (wcslen(value) + 1) * sizeof(WCHAR);
+    if (!(tmp = GlobalAlloc(0, len)))
+        return NULL;
+
+    return memcpy(tmp, value, len);
+}
+
+static char *copy_optionA(WCHAR *value)
+{
+    DWORD len;
+    void *tmp;
+
+    if (!value)
+        return NULL;
+
+    len = WideCharToMultiByte(CP_ACP, 0, value, -1, NULL, 0, NULL, NULL);
+    if (!(tmp = GlobalAlloc(0, len)))
+        return NULL;
+
+    WideCharToMultiByte(CP_ACP, 0, value, -1, tmp, len, NULL, NULL);
+    return tmp;
+}
+
 static DWORD APPINFO_QueryOption(object_header_t *hdr, DWORD option, void *buffer, DWORD *size, BOOL unicode)
 {
     appinfo_t *ai = (appinfo_t*)hdr;
@@ -1123,6 +1157,80 @@ static DWORD APPINFO_QueryOption(object_header_t *hdr, DWORD option, void *buffe
         *size = sizeof(ULONG);
 
         return ERROR_SUCCESS;
+
+    case INTERNET_OPTION_PER_CONNECTION_OPTION: {
+        INTERNET_PER_CONN_OPTION_LISTW *con = buffer;
+        INTERNET_PER_CONN_OPTION_LISTA *conA = buffer;
+        LONG res = ERROR_SUCCESS;
+        WCHAR *url = NULL;
+        int i;
+
+        if (*size < sizeof(INTERNET_PER_CONN_OPTION_LISTW))
+            return ERROR_INSUFFICIENT_BUFFER;
+
+        EnterCriticalSection(&WININET_cs);
+
+        if (global_proxy.flags & PROXY_TYPE_AUTO_DETECT)
+            url = get_proxy_autoconfig_url();
+
+        for (i = 0; i < con->dwOptionCount; i++) {
+            INTERNET_PER_CONN_OPTIONW *optionW = con->pOptions + i;
+            INTERNET_PER_CONN_OPTIONA *optionA = conA->pOptions + i;
+
+            switch (optionW->dwOption) {
+            case INTERNET_PER_CONN_FLAGS:
+                optionW->Value.dwValue = global_proxy.flags;
+                break;
+
+            case INTERNET_PER_CONN_PROXY_SERVER:
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(global_proxy.proxy);
+                else
+                    optionA->Value.pszValue = copy_optionA(global_proxy.proxy);
+                break;
+
+            case INTERNET_PER_CONN_PROXY_BYPASS:
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(global_proxy.proxyBypass);
+                else
+                    optionA->Value.pszValue = copy_optionA(global_proxy.proxyBypass);
+                break;
+
+            case INTERNET_PER_CONN_AUTOCONFIG_URL:
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(global_proxy.autoconf_url);
+                else
+                    optionA->Value.pszValue = copy_optionA(global_proxy.autoconf_url);
+                break;
+
+            case INTERNET_PER_CONN_AUTODISCOVERY_FLAGS:
+                optionW->Value.dwValue = AUTO_PROXY_FLAG_ALWAYS_DETECT;
+                break;
+
+            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_URL:
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(url);
+                else
+                    optionA->Value.pszValue = copy_optionA(url);
+                break;
+
+            case INTERNET_PER_CONN_AUTOCONFIG_SECONDARY_URL:
+            case INTERNET_PER_CONN_AUTOCONFIG_RELOAD_DELAY_MINS:
+            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_TIME:
+                FIXME("Unhandled dwOption %ld\n", optionW->dwOption);
+                memset(&optionW->Value, 0, sizeof(optionW->Value));
+                break;
+
+            default:
+                FIXME("Unknown dwOption %ld\n", optionW->dwOption);
+                res = ERROR_INVALID_PARAMETER;
+                break;
+            }
+        }
+
+        LeaveCriticalSection(&WININET_cs);
+        return res;
+    }
     }
 
     return INET_QueryOption(hdr, option, buffer, size, unicode);
@@ -1150,6 +1258,53 @@ static DWORD APPINFO_SetOption(object_header_t *hdr, DWORD option, void *buf, DW
     case INTERNET_OPTION_REFRESH:
         FIXME("INTERNET_OPTION_REFRESH\n");
         return ERROR_SUCCESS;
+    case INTERNET_OPTION_PER_CONNECTION_OPTION: {
+        INTERNET_PER_CONN_OPTION_LISTW *con = buf;
+        unsigned int i;
+
+        EnterCriticalSection( &WININET_cs );
+        for (i = 0; i < con->dwOptionCount; i++) {
+            INTERNET_PER_CONN_OPTIONW *option = con->pOptions + i;
+
+            switch (option->dwOption) {
+            case INTERNET_PER_CONN_PROXY_SERVER:
+                free(global_proxy.proxy);
+                global_proxy.proxy = wcsdup(option->Value.pszValue);
+                break;
+
+            case INTERNET_PER_CONN_FLAGS:
+                if(option->Value.dwValue & ~(PROXY_TYPE_PROXY | PROXY_TYPE_DIRECT))
+                    FIXME("Unhandled flags: 0x%lx\n", option->Value.dwValue);
+                global_proxy.flags = option->Value.dwValue;
+                break;
+
+            case INTERNET_PER_CONN_PROXY_BYPASS:
+                free(global_proxy.proxyBypass);
+                global_proxy.proxyBypass = wcsdup(option->Value.pszValue);
+                break;
+
+            case INTERNET_PER_CONN_AUTOCONFIG_URL:
+                free(global_proxy.autoconf_url);
+                global_proxy.autoconf_url = wcsdup(option->Value.pszValue);
+                break;
+
+            case INTERNET_PER_CONN_AUTODISCOVERY_FLAGS:
+            case INTERNET_PER_CONN_AUTOCONFIG_SECONDARY_URL:
+            case INTERNET_PER_CONN_AUTOCONFIG_RELOAD_DELAY_MINS:
+            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_TIME:
+            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_URL:
+                FIXME("Unhandled dwOption %ld\n", option->dwOption);
+                break;
+
+            default:
+                FIXME("Unknown dwOption %ld\n", option->dwOption);
+                SetLastError(ERROR_INVALID_PARAMETER);
+                break;
+            }
+        }
+        LeaveCriticalSection( &WININET_cs );
+        return ERROR_SUCCESS;
+    }
     }
 
     return INET_SetOption(hdr, option, buf, size);
@@ -2759,37 +2914,6 @@ static WCHAR *get_proxy_autoconfig_url(void)
     return ret;
 }
 
-static WCHAR *copy_optionW(WCHAR *value)
-{
-    DWORD len;
-    void *tmp;
-
-    if (!value)
-        return NULL;
-
-    len = (wcslen(value) + 1) * sizeof(WCHAR);
-    if (!(tmp = GlobalAlloc(0, len)))
-        return NULL;
-
-    return memcpy(tmp, value, len);
-}
-
-static char *copy_optionA(WCHAR *value)
-{
-    DWORD len;
-    void *tmp;
-
-    if (!value)
-        return NULL;
-
-    len = WideCharToMultiByte(CP_ACP, 0, value, -1, NULL, 0, NULL, NULL);
-    if (!(tmp = GlobalAlloc(0, len)))
-        return NULL;
-
-    WideCharToMultiByte(CP_ACP, 0, value, -1, tmp, len, NULL, NULL);
-    return tmp;
-}
-
 static DWORD query_global_option(DWORD option, void *buffer, DWORD *size, BOOL unicode)
 {
     /* FIXME: This function currently handles more options than it should. Options requiring
@@ -2873,25 +2997,25 @@ static DWORD query_global_option(DWORD option, void *buffer, DWORD *size, BOOL u
     }
 
     case INTERNET_OPTION_PER_CONNECTION_OPTION: {
-        WCHAR *url;
+        WCHAR *url = NULL;
         INTERNET_PER_CONN_OPTION_LISTW *con = buffer;
         INTERNET_PER_CONN_OPTION_LISTA *conA = buffer;
         DWORD res = ERROR_SUCCESS, i;
         proxyinfo_t pi;
         LONG ret;
 
-        TRACE("Getting global proxy info\n");
         if((ret = INTERNET_LoadProxySettings(&pi)))
             return ret;
 
-        FIXME("INTERNET_OPTION_PER_CONNECTION_OPTION stub\n");
+        TRACE("INTERNET_OPTION_PER_CONNECTION_OPTION\n");
 
         if (*size < sizeof(INTERNET_PER_CONN_OPTION_LISTW)) {
             FreeProxyInfo(&pi);
             return ERROR_INSUFFICIENT_BUFFER;
         }
 
-        url = get_proxy_autoconfig_url();
+        if (pi.flags & PROXY_TYPE_AUTO_DETECT)
+            url = get_proxy_autoconfig_url();
 
         for (i = 0; i < con->dwOptionCount; i++) {
             INTERNET_PER_CONN_OPTIONW *optionW = con->pOptions + i;
@@ -2900,9 +3024,6 @@ static DWORD query_global_option(DWORD option, void *buffer, DWORD *size, BOOL u
             switch (optionW->dwOption) {
             case INTERNET_PER_CONN_FLAGS:
                 optionW->Value.dwValue = pi.flags;
-                if (url)
-                    /* native includes PROXY_TYPE_DIRECT even if PROXY_TYPE_PROXY is set */
-                    optionW->Value.dwValue |= PROXY_TYPE_DIRECT|PROXY_TYPE_AUTO_PROXY_URL;
                 break;
 
             case INTERNET_PER_CONN_PROXY_SERVER:
@@ -2920,22 +3041,26 @@ static DWORD query_global_option(DWORD option, void *buffer, DWORD *size, BOOL u
                 break;
 
             case INTERNET_PER_CONN_AUTOCONFIG_URL:
-                if (!url)
-                    optionW->Value.pszValue = NULL;
-                else if (unicode)
-                    optionW->Value.pszValue = copy_optionW(url);
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(pi.autoconf_url);
                 else
-                    optionA->Value.pszValue = copy_optionA(url);
+                    optionA->Value.pszValue = copy_optionA(pi.autoconf_url);
                 break;
 
             case INTERNET_PER_CONN_AUTODISCOVERY_FLAGS:
                 optionW->Value.dwValue = AUTO_PROXY_FLAG_ALWAYS_DETECT;
                 break;
 
+            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_URL:
+                if (unicode)
+                    optionW->Value.pszValue = copy_optionW(url);
+                else
+                    optionA->Value.pszValue = copy_optionA(url);
+                break;
+
             case INTERNET_PER_CONN_AUTOCONFIG_SECONDARY_URL:
             case INTERNET_PER_CONN_AUTOCONFIG_RELOAD_DELAY_MINS:
             case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_TIME:
-            case INTERNET_PER_CONN_AUTOCONFIG_LAST_DETECT_URL:
                 FIXME("Unhandled dwOption %ld\n", optionW->dwOption);
                 memset(&optionW->Value, 0, sizeof(optionW->Value));
                 break;
@@ -3395,6 +3520,10 @@ BOOL WINAPI InternetSetOptionW(HINTERNET hInternet, DWORD dwOption,
                 break;
 
             case INTERNET_PER_CONN_AUTOCONFIG_URL:
+                free(pi.autoconf_url);
+                pi.autoconf_url = wcsdup(option->Value.pszValue);
+                break;
+
             case INTERNET_PER_CONN_AUTODISCOVERY_FLAGS:
             case INTERNET_PER_CONN_AUTOCONFIG_SECONDARY_URL:
             case INTERNET_PER_CONN_AUTOCONFIG_RELOAD_DELAY_MINS:

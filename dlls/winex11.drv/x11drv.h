@@ -158,11 +158,6 @@ extern BOOL X11DRV_Arc( PHYSDEV dev, INT left, INT top, INT right,
                         INT bottom, INT xstart, INT ystart, INT xend, INT yend );
 extern BOOL X11DRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                           INT xstart, INT ystart, INT xend, INT yend );
-extern NTSTATUS X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc );
-extern NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc );
-extern NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc );
-extern NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc );
-extern NTSTATUS X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc );
 extern BOOL X11DRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom );
 extern BOOL X11DRV_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT fillType );
 extern BOOL X11DRV_FillPath( PHYSDEV dev );
@@ -294,7 +289,7 @@ extern BOOL shape_layered_windows;
 extern const struct gdi_dc_funcs *X11DRV_XRender_Init(void);
 
 extern struct opengl_funcs *get_glx_driver(UINT);
-extern const struct vulkan_funcs *get_vulkan_driver(UINT);
+extern UINT X11DRV_VulkanInit( UINT, void *, struct vulkan_funcs * );
 
 extern struct format_entry *import_xdnd_selection( Display *display, Window win, Atom selection,
                                                    Atom *targets, UINT count,
@@ -573,6 +568,8 @@ extern BOOL X11DRV_GenericEvent( HWND hwnd, XEvent *event );
 extern int xinput2_opcode;
 extern void x11drv_xinput2_load(void);
 extern void x11drv_xinput2_init( struct x11drv_thread_data *data );
+extern void x11drv_xinput2_enable( Display *display, Window window );
+extern void x11drv_xinput2_disable( Display *display, Window window );
 
 extern Bool (*pXGetEventData)( Display *display, XEvent /*XGenericEventCookie*/ *event );
 extern void (*pXFreeEventData)( Display *display, XEvent /*XGenericEventCookie*/ *event );
@@ -653,7 +650,6 @@ extern void update_user_time( Time time );
 extern void read_net_wm_states( Display *display, struct x11drv_win_data *data );
 extern void update_net_wm_states( struct x11drv_win_data *data );
 extern void make_window_embedded( struct x11drv_win_data *data );
-extern Window create_dummy_client_window(void);
 extern Window create_client_window( HWND hwnd, const XVisualInfo *visual );
 extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
 extern void change_systray_owner( Display *display, Window systray_window );
@@ -765,6 +761,12 @@ void init_user_driver(void);
 
 /* X11 display device handler. Used to initialize display device registry data */
 
+struct x11drv_adapter
+{
+    ULONG_PTR id;
+    DWORD state_flags;
+};
+
 /* Required functions for display device registry initialization */
 struct x11drv_display_device_handler
 {
@@ -783,7 +785,7 @@ struct x11drv_display_device_handler
      * The first adapter has to be primary if GPU is primary.
      *
      * Return FALSE on failure with parameters unchanged */
-    BOOL (*get_adapters)(ULONG_PTR gpu_id, struct gdi_adapter **adapters, int *count);
+    BOOL (*get_adapters)(ULONG_PTR gpu_id, struct x11drv_adapter **adapters, int *count);
 
     /* get_monitors will be called to get a list of monitors in EnumDisplayDevices context under an adapter.
      * The first monitor has to be primary if adapter is primary.
@@ -795,7 +797,7 @@ struct x11drv_display_device_handler
     void (*free_gpus)(struct gdi_gpu *gpus);
 
     /* free_adapters will be called to free an adapter list from get_adapters */
-    void (*free_adapters)(struct gdi_adapter *adapters);
+    void (*free_adapters)(struct x11drv_adapter *adapters);
 
     /* free_monitors will be called to free a monitor list from get_monitors */
     void (*free_monitors)(struct gdi_monitor *monitors, int count);

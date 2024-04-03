@@ -57,6 +57,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
 
     /* ARB */
     {"GL_ARB_base_instance",                ARB_BASE_INSTANCE             },
+    {"GL_ARB_bindless_texture",             ARB_BINDLESS_TEXTURE          },
     {"GL_ARB_blend_func_extended",          ARB_BLEND_FUNC_EXTENDED       },
     {"GL_ARB_buffer_storage",               ARB_BUFFER_STORAGE            },
     {"GL_ARB_clear_buffer_object",          ARB_CLEAR_BUFFER_OBJECT       },
@@ -2114,6 +2115,12 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     /* GL_ARB_base_instance */
     USE_GL_FUNC(glDrawArraysInstancedBaseInstance)
     USE_GL_FUNC(glDrawElementsInstancedBaseVertexBaseInstance)
+    /* GL_ARB_bindless_texture */
+    USE_GL_FUNC(glGetTextureHandleARB)
+    USE_GL_FUNC(glGetTextureSamplerHandleARB)
+    USE_GL_FUNC(glIsTextureHandleResidentARB)
+    USE_GL_FUNC(glMakeTextureHandleResidentARB)
+    USE_GL_FUNC(glUniformHandleui64ARB)
     /* GL_ARB_blend_func_extended */
     USE_GL_FUNC(glBindFragDataLocationIndexed)
     USE_GL_FUNC(glGetFragDataIndex)
@@ -3607,6 +3614,14 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         /* GL_ARB_half_float_vertex is a subset of GL_NV_half_float. */
         gl_info->supported[ARB_HALF_FLOAT_VERTEX] = TRUE;
     }
+    if (wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
+    {
+        /* ARB_bindless_texture does not let us use EXT_texture_sRGB_decode.
+         * We could use ARB_texture_view, but the main reason to use bindless
+         * textures is to avoid GL_MAX_TEXTURE_IMAGE_UNITS, so there's not much
+         * point. */
+        gl_info->supported[ARB_BINDLESS_TEXTURE] = FALSE;
+    }
     if (gl_info->supported[ARB_FRAMEBUFFER_SRGB] && !gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
     {
         /* Current wined3d sRGB infrastructure requires EXT_texture_sRGB_decode
@@ -3768,6 +3783,8 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         gl_info->fbo_ops.glBlitFramebuffer = gl_info->gl_ops.ext.p_glBlitFramebuffer;
         gl_info->fbo_ops.glGenerateMipmap = gl_info->gl_ops.ext.p_glGenerateMipmap;
         gl_info->fbo_ops.glFramebufferTexture = gl_info->gl_ops.ext.p_glFramebufferTexture;
+
+        gl_info->supported[EXT_FRAMEBUFFER_OBJECT] = TRUE;
     }
     else
     {
@@ -4133,7 +4150,7 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
         attribute = WGL_NUMBER_PIXEL_FORMATS_ARB;
         GL_EXTCALL(wglGetPixelFormatAttribivARB(dc, 0, 0, 1, &attribute, &cfg_count));
 
-        adapter_gl->pixel_formats = heap_calloc(cfg_count, sizeof(*adapter_gl->pixel_formats));
+        adapter_gl->pixel_formats = calloc(cfg_count, sizeof(*adapter_gl->pixel_formats));
         attribs[attrib_count++] = WGL_RED_BITS_ARB;
         attribs[attrib_count++] = WGL_GREEN_BITS_ARB;
         attribs[attrib_count++] = WGL_BLUE_BITS_ARB;
@@ -4200,7 +4217,7 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter_gl *adapter_gl, 
         int cfg_count;
 
         cfg_count = DescribePixelFormat(dc, 0, 0, 0);
-        adapter_gl->pixel_formats = heap_calloc(cfg_count, sizeof(*adapter_gl->pixel_formats));
+        adapter_gl->pixel_formats = calloc(cfg_count, sizeof(*adapter_gl->pixel_formats));
 
         for (i = 0, adapter_gl->pixel_format_count = 0; i < cfg_count; ++i)
         {
@@ -4251,9 +4268,9 @@ static void adapter_gl_destroy(struct wined3d_adapter *adapter)
 {
     struct wined3d_adapter_gl *adapter_gl = wined3d_adapter_gl(adapter);
 
-    heap_free(adapter_gl->pixel_formats);
+    free(adapter_gl->pixel_formats);
     wined3d_adapter_cleanup(adapter);
-    heap_free(adapter_gl);
+    free(adapter_gl);
 }
 
 static HRESULT adapter_gl_create_device(struct wined3d *wined3d, const struct wined3d_adapter *adapter,
@@ -4264,7 +4281,7 @@ static HRESULT adapter_gl_create_device(struct wined3d *wined3d, const struct wi
     struct wined3d_device_gl *device_gl;
     HRESULT hr;
 
-    if (!(device_gl = heap_alloc_zero(sizeof(*device_gl))))
+    if (!(device_gl = calloc(1, sizeof(*device_gl))))
         return E_OUTOFMEMORY;
 
     device_gl->current_fence_id = 1;
@@ -4274,7 +4291,7 @@ static HRESULT adapter_gl_create_device(struct wined3d *wined3d, const struct wi
             wined3d_adapter_gl_const(adapter)->gl_info.supported, device_parent)))
     {
         WARN("Failed to initialize device, hr %#lx.\n", hr);
-        heap_free(device_gl);
+        free(device_gl);
         return hr;
     }
 
@@ -4291,8 +4308,8 @@ static void adapter_gl_destroy_device(struct wined3d_device *device)
     wined3d_device_cleanup(&device_gl->d);
     wined3d_lock_cleanup(&device_gl->allocator_cs);
 
-    heap_free(device_gl->retired_blocks);
-    heap_free(device_gl);
+    free(device_gl->retired_blocks);
+    free(device_gl);
 }
 
 static struct wined3d_context *adapter_gl_acquire_context(struct wined3d_device *device,
@@ -4653,12 +4670,12 @@ static bool adapter_gl_alloc_bo(struct wined3d_device *device, struct wined3d_re
         flags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT;
     }
 
-    if (!(bo_gl = heap_alloc(sizeof(*bo_gl))))
+    if (!(bo_gl = malloc(sizeof(*bo_gl))))
         return false;
 
     if (!(wined3d_device_gl_create_bo(device_gl, NULL, size, binding, usage, coherent, flags, bo_gl)))
     {
-        heap_free(bo_gl);
+        free(bo_gl);
         return false;
     }
 
@@ -4702,13 +4719,13 @@ static HRESULT adapter_gl_create_swapchain(struct wined3d_device *device,
     TRACE("device %p, desc %p, state_parent %p, parent %p, parent_ops %p, swapchain %p.\n",
             device, desc, state_parent, parent, parent_ops, swapchain);
 
-    if (!(swapchain_gl = heap_alloc_zero(sizeof(*swapchain_gl))))
+    if (!(swapchain_gl = calloc(1, sizeof(*swapchain_gl))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_swapchain_gl_init(swapchain_gl, device, desc, state_parent, parent, parent_ops)))
     {
         WARN("Failed to initialise swapchain, hr %#lx.\n", hr);
-        heap_free(swapchain_gl);
+        free(swapchain_gl);
         return hr;
     }
 
@@ -4723,7 +4740,7 @@ static void adapter_gl_destroy_swapchain(struct wined3d_swapchain *swapchain)
     struct wined3d_swapchain_gl *swapchain_gl = wined3d_swapchain_gl(swapchain);
 
     wined3d_swapchain_gl_cleanup(swapchain_gl);
-    heap_free(swapchain_gl);
+    free(swapchain_gl);
 }
 
 static HRESULT adapter_gl_create_buffer(struct wined3d_device *device,
@@ -4736,13 +4753,13 @@ static HRESULT adapter_gl_create_buffer(struct wined3d_device *device,
     TRACE("device %p, desc %p, data %p, parent %p, parent_ops %p, buffer %p.\n",
             device, desc, data, parent, parent_ops, buffer);
 
-    if (!(buffer_gl = heap_alloc_zero(sizeof(*buffer_gl))))
+    if (!(buffer_gl = calloc(1, sizeof(*buffer_gl))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_buffer_gl_init(buffer_gl, device, desc, data, parent, parent_ops)))
     {
         WARN("Failed to initialise buffer, hr %#lx.\n", hr);
-        heap_free(buffer_gl);
+        free(buffer_gl);
         return hr;
     }
 
@@ -4767,7 +4784,7 @@ static void adapter_gl_destroy_buffer(struct wined3d_buffer *buffer)
     if (swapchain_count)
         wined3d_device_incref(device);
     wined3d_buffer_cleanup(&buffer_gl->b);
-    wined3d_cs_destroy_object(device->cs, heap_free, buffer_gl);
+    wined3d_cs_destroy_object(device->cs, free, buffer_gl);
     if (swapchain_count)
         wined3d_device_decref(device);
 }
@@ -4789,7 +4806,7 @@ static HRESULT adapter_gl_create_texture(struct wined3d_device *device,
             layer_count, level_count, flags, parent, parent_ops)))
     {
         WARN("Failed to initialise texture, hr %#lx.\n", hr);
-        heap_free(texture_gl);
+        free(texture_gl);
         return hr;
     }
 
@@ -4818,7 +4835,7 @@ static void adapter_gl_destroy_texture(struct wined3d_texture *texture)
     texture->resource.parent_ops->wined3d_object_destroyed(texture->resource.parent);
 
     wined3d_texture_cleanup(&texture_gl->t);
-    wined3d_cs_destroy_object(device->cs, heap_free, texture_gl);
+    wined3d_cs_destroy_object(device->cs, free, texture_gl);
 
     if (swapchain_count)
         wined3d_device_decref(device);
@@ -4834,13 +4851,13 @@ static HRESULT adapter_gl_create_rendertarget_view(const struct wined3d_view_des
     TRACE("desc %s, resource %p, parent %p, parent_ops %p, view %p.\n",
             wined3d_debug_view_desc(desc, resource), resource, parent, parent_ops, view);
 
-    if (!(view_gl = heap_alloc_zero(sizeof(*view_gl))))
+    if (!(view_gl = calloc(1, sizeof(*view_gl))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_rendertarget_view_gl_init(view_gl, desc, resource, parent, parent_ops)))
     {
         WARN("Failed to initialise view, hr %#lx.\n", hr);
-        heap_free(view_gl);
+        free(view_gl);
         return hr;
     }
 
@@ -4890,8 +4907,8 @@ static void wined3d_view_gl_destroy_object(void *object)
     if (ctx->bo_user && ctx->bo_user->valid)
         list_remove(&ctx->bo_user->entry);
 
-    heap_free(ctx->object);
-    heap_free(ctx->free);
+    free(ctx->object);
+    free(ctx->free);
 }
 
 static void wined3d_view_gl_destroy(struct wined3d_device *device, const struct wined3d_gl_view *gl_view,
@@ -4899,7 +4916,7 @@ static void wined3d_view_gl_destroy(struct wined3d_device *device, const struct 
 {
     struct wined3d_view_gl_destroy_ctx *ctx, c;
 
-    if (!(ctx = heap_alloc(sizeof(*ctx))))
+    if (!(ctx = malloc(sizeof(*ctx))))
         ctx = &c;
     ctx->device = device;
     ctx->gl_view = gl_view;
@@ -4934,13 +4951,13 @@ static HRESULT adapter_gl_create_shader_resource_view(const struct wined3d_view_
     TRACE("desc %s, resource %p, parent %p, parent_ops %p, view %p.\n",
             wined3d_debug_view_desc(desc, resource), resource, parent, parent_ops, view);
 
-    if (!(view_gl = heap_alloc_zero(sizeof(*view_gl))))
+    if (!(view_gl = calloc(1, sizeof(*view_gl))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_shader_resource_view_gl_init(view_gl, desc, resource, parent, parent_ops)))
     {
         WARN("Failed to initialise view, hr %#lx.\n", hr);
-        heap_free(view_gl);
+        free(view_gl);
         return hr;
     }
 
@@ -4971,13 +4988,13 @@ static HRESULT adapter_gl_create_unordered_access_view(const struct wined3d_view
     TRACE("desc %s, resource %p, parent %p, parent_ops %p, view %p.\n",
             wined3d_debug_view_desc(desc, resource), resource, parent, parent_ops, view);
 
-    if (!(view_gl = heap_alloc_zero(sizeof(*view_gl))))
+    if (!(view_gl = calloc(1, sizeof(*view_gl))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_unordered_access_view_gl_init(view_gl, desc, resource, parent, parent_ops)))
     {
         WARN("Failed to initialise view, hr %#lx.\n", hr);
-        heap_free(view_gl);
+        free(view_gl);
         return hr;
     }
 
@@ -5006,7 +5023,7 @@ static HRESULT adapter_gl_create_sampler(struct wined3d_device *device, const st
     TRACE("device %p, desc %p, parent %p, parent_ops %p, sampler %p.\n",
             device, desc, parent, parent_ops, sampler);
 
-    if (!(sampler_gl = heap_alloc_zero(sizeof(*sampler_gl))))
+    if (!(sampler_gl = calloc(1, sizeof(*sampler_gl))))
         return E_OUTOFMEMORY;
 
     wined3d_sampler_gl_init(sampler_gl, device, desc, parent, parent_ops);
@@ -5033,7 +5050,7 @@ static void wined3d_sampler_gl_destroy_object(void *object)
         context_release(context);
     }
 
-    heap_free(sampler_gl);
+    free(sampler_gl);
 }
 
 static void adapter_gl_destroy_sampler(struct wined3d_sampler *sampler)
@@ -5284,6 +5301,16 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     LUID primary_luid, *luid = NULL;
     unsigned int i;
 
+    static const struct
+    {
+        enum wined3d_gl_extension extension;
+        const char *string;
+    }
+    required_extensions[] =
+    {
+        {EXT_FRAMEBUFFER_OBJECT, "EXT_framebuffer_object"},
+    };
+
     TRACE("adapter_gl %p, ordinal %u, wined3d_creation_flags %#x.\n",
             adapter_gl, ordinal, wined3d_creation_flags);
 
@@ -5342,6 +5369,16 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
         return FALSE;
     }
 
+    for (unsigned int i = 0; i < ARRAY_SIZE(required_extensions); ++i)
+    {
+        if (!gl_info->supported[required_extensions[i].extension])
+        {
+            ERR("Required extension %s is not supported.\n", required_extensions[i].string);
+            wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
+            return FALSE;
+        }
+    }
+
     gl_info->filling_convention_offset = wined3d_adapter_find_fill_offset(&caps_gl_ctx);
 
     wined3d_adapter_gl_init_d3d_info(adapter_gl, wined3d_creation_flags);
@@ -5363,10 +5400,6 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     TRACE("Reporting (fake) driver version 0x%08x-0x%08x.\n",
             driver_info->version_high, driver_info->version_low);
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
-        ERR_(winediag)("You are using the backbuffer for offscreen rendering. "
-                "This is unsupported, and will be removed in a future version.\n");
-
     wined3d_adapter_init_fb_cfgs(adapter_gl, caps_gl_ctx.dc);
     /* We haven't found any suitable formats. This should only happen in
      * case of GDI software rendering, which is pretty useless anyway. */
@@ -5374,7 +5407,7 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     {
         WARN("No suitable pixel formats found.\n");
         wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
-        heap_free(adapter_gl->pixel_formats);
+        free(adapter_gl->pixel_formats);
         return FALSE;
     }
 
@@ -5382,7 +5415,7 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     {
         ERR("Failed to initialize GL format info.\n");
         wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
-        heap_free(adapter_gl->pixel_formats);
+        free(adapter_gl->pixel_formats);
         return FALSE;
     }
 
@@ -5397,12 +5430,12 @@ struct wined3d_adapter *wined3d_adapter_gl_create(unsigned int ordinal, unsigned
 {
     struct wined3d_adapter_gl *adapter;
 
-    if (!(adapter = heap_alloc_zero(sizeof(*adapter))))
+    if (!(adapter = calloc(1, sizeof(*adapter))))
         return NULL;
 
     if (!wined3d_adapter_gl_init(adapter, ordinal, wined3d_creation_flags))
     {
-        heap_free(adapter);
+        free(adapter);
         return NULL;
     }
 

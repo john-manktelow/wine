@@ -29,7 +29,6 @@ AC_ARG_WITH(capi,      AS_HELP_STRING([--without-capi],[do not use CAPI (ISDN su
 AC_ARG_WITH(coreaudio, AS_HELP_STRING([--without-coreaudio],[do not use the CoreAudio sound support]))
 AC_ARG_WITH(cups,      AS_HELP_STRING([--without-cups],[do not use CUPS]))
 AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic device support)]))
-AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
@@ -146,57 +145,14 @@ case $host in
     if test x"$wine_cv_thumb2" = xyes
     then
         CFLAGS="$CFLAGS -mthumb"
-        TARGETFLAGS="$TARGETFLAGS -mthumb"
     else
         CFLAGS="$CFLAGS -marm"
-        TARGETFLAGS="$TARGETFLAGS -marm"
     fi
-    case $with_float_abi in
-      soft|softfp|hard)
-        float_abi=$with_float_abi ;;
-      *)
-        case $host_os in
-          *eabihf)
-            float_abi=hard ;;
-          *)
-            float_abi=softfp
-            saved_CFLAGS=$CFLAGS
-            CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
-            AC_CACHE_CHECK([whether $CC supports -mfloat-abi=$float_abi],wine_cv_float_abi,
-                [WINE_TRY_ASM_LINK(["vmrs r2,fpscr"],,,[wine_cv_float_abi=yes],[wine_cv_float_abi=no])])
-            if test $wine_cv_float_abi = no
-            then
-                float_abi=soft
-                WINE_WARNING([Floating point is not supported for this target. The resulting build won't be compatible with Windows ARM binaries.])
-            fi
-            CFLAGS=$saved_CFLAGS
-        esac
-        ;;
-    esac
-    CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
-    TARGETFLAGS="$TARGETFLAGS -mfloat-abi=$float_abi"
+    AC_CACHE_CHECK([whether $CC supports floating point instructions],wine_cv_float_abi,
+                   [WINE_TRY_ASM_LINK(["vmrs r2,fpscr"],,,[wine_cv_float_abi=yes],[wine_cv_float_abi=no])])
+    test $wine_cv_float_abi != no || AC_MSG_ERROR([The ARM target needs to support floating point instructions.])
     ;;
 esac
-
-enable_win16=${enable_win16:-i386}
-enable_win64=${enable_win64:-no}
-enable_wow64=${enable_wow64:-aarch64,x86_64}
-enable_wow64win=${enable_wow64win:-aarch64,x86_64}
-enable_wow64cpu=${enable_wow64cpu:-x86_64}
-enable_vcruntime140_1=${enable_vcruntime140_1:-x86_64,arm64ec}
-
-dnl Explicitly enable some programs for arm64ec
-enable_cmd=${enable_cmd:-yes}
-enable_dllhost=${enable_dllhost:-yes}
-enable_dpnsvr=${enable_dpnsvr:-i386,x86_64,arm64ec}
-enable_dxdiag=${enable_dxdiag:-yes}
-enable_msiexec=${enable_msiexec:-yes}
-enable_netsh=${enable_netsh:-yes}
-enable_regsvr32=${enable_regsvr32:-yes}
-enable_rundll32=${enable_rundll32:-yes}
-
-dnl Disable winetest too if tests are disabled
-enable_winetest=${enable_winetest:-$enable_tests}
 
 dnl Some special cases for the 64-bit build
 if test "x$enable_win64" = "xyes"
@@ -990,7 +946,10 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     WINE_TRY_PE_CFLAGS([-Wpointer-arith])
     WINE_TRY_PE_CFLAGS([-Wlogical-op])
     WINE_TRY_PE_CFLAGS([-Wabsolute-value])
-    WINE_TRY_PE_CFLAGS([-Wenum-conversion])
+    WINE_TRY_PE_CFLAGS([-Wenum-enum-conversion],[:],WINE_TRY_PE_CFLAGS([-Wenum-conversion]))
+
+    dnl GCC can't handle large files when -Wmisleading-indentation is enabled (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=89549)
+    WINE_TRY_PE_CFLAGS([-flarge-source-files -Wmisleading-indentation],[AS_VAR_APPEND(${wine_arch}_EXTRACFLAGS,[" -Wno-misleading-indentation"])])
 
     case $wine_arch in
       i386) WINE_TRY_PE_CFLAGS([-fno-omit-frame-pointer])
@@ -1186,7 +1145,7 @@ WINE_EXTLIB_FLAGS(JPEG, jpeg, jpeg, "-I\$(top_srcdir)/libs/jpeg")
 WINE_EXTLIB_FLAGS(JXR, jxr, jxr, "-I\$(top_srcdir)/libs/jxr/jxrgluelib -I\$(top_srcdir)/libs/jxr/image/sys")
 WINE_EXTLIB_FLAGS(LCMS2, lcms2, lcms2, "-I\$(top_srcdir)/libs/lcms2/include")
 WINE_EXTLIB_FLAGS(LDAP, ldap, ldap, "-I\$(top_srcdir)/libs/ldap/include")
-WINE_EXTLIB_FLAGS(MPG123, mpg123, mpg123, "-I\$(top_srcdir)/libs/mpg123/src/libmpg123")
+WINE_EXTLIB_FLAGS(MPG123, mpg123, mpg123, "-I\$(top_srcdir)/libs/mpg123/src/include")
 WINE_EXTLIB_FLAGS(MUSL, musl, musl)
 WINE_EXTLIB_FLAGS(PNG, png, "png \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/png")
 WINE_EXTLIB_FLAGS(TIFF, tiff, "tiff \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/tiff/libtiff")
@@ -1401,6 +1360,22 @@ then
     WINE_PACKAGE_FLAGS(XKBREGISTRY,[xkbregistry],,,,
         [AC_CHECK_HEADERS([xkbcommon/xkbregistry.h])
          AC_CHECK_LIB(xkbregistry,rxkb_context_new,[:],[XKBREGISTRY_LIBS=""],[$XKBREGISTRY_LIBS])])
+    if test "x$with_opengl" != "xno"
+    then
+        WINE_PACKAGE_FLAGS(EGL,[egl],[-lEGL],,,
+            [AC_CHECK_HEADER([EGL/egl.h],
+               [WINE_CHECK_SONAME(EGL,eglGetProcAddress,,,[$EGL_LIBS])])])
+        WINE_PACKAGE_FLAGS(WAYLAND_EGL,[wayland-egl],,,,
+            [AC_CHECK_HEADER([wayland-egl.h],
+               [AC_CHECK_LIB(wayland-egl,wl_egl_window_create,
+                  [AC_DEFINE(HAVE_LIBWAYLAND_EGL, 1, [Define if we have the wayland-egl development environment])],
+                  [WAYLAND_EGL_LIBS=""],[$WAYLAND_EGL_LIBS])])])
+        if test "x$with_wayland" != "x"
+        then
+            WINE_NOTICE_WITH(opengl, [test -z "$ac_cv_lib_soname_EGL" -o "$ac_cv_lib_wayland_egl_wl_egl_window_create" != yes],
+                [EGL ${notice_platform}development files not found, the Wayland driver won't support OpenGL])
+        fi
+    fi
 fi
 WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS" -o -z "$WAYLAND_SCANNER" -o -z "$XKBCOMMON_LIBS" -o -z "$XKBREGISTRY_LIBS" -o "$ac_cv_header_linux_input_h" = "no"],
                  [Wayland ${notice_platform}development files not found, the Wayland driver won't be supported.],
@@ -1852,7 +1827,7 @@ then
     WINE_CHECK_SONAME(vulkan, vkGetInstanceProcAddr)
     if test "x$ac_cv_lib_soname_vulkan" = "x"
     then
-        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr)
+        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr, [AC_DEFINE_UNQUOTED(SONAME_LIBVULKAN,["$ac_cv_lib_soname_MoltenVK"])])
     fi
 fi
 WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
@@ -1886,6 +1861,9 @@ then
   WINE_TRY_CFLAGS([-Wunused-but-set-parameter])
   WINE_TRY_CFLAGS([-Wvla])
   WINE_TRY_CFLAGS([-Wwrite-strings])
+
+  dnl GCC can't handle large files when -Wmisleading-indentation is enabled (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=89549)
+  WINE_TRY_CFLAGS([-flarge-source-files -Wmisleading-indentation],[EXTRACFLAGS="$EXTRACFLAGS -Wno-misleading-indentation"])
 
   dnl Check for noisy string.h
   WINE_TRY_CFLAGS([-Wpointer-arith],
@@ -2165,7 +2143,7 @@ AC_CACHE_CHECK([whether we can use re-entrant gethostbyname_r Linux style],
    fi
 
 dnl Check for socket structure members
-AC_CHECK_MEMBERS([struct msghdr.msg_accrights, struct sockaddr_un.sun_len],,,
+AC_CHECK_MEMBERS([struct sockaddr_un.sun_len],,,
 [#include <sys/types.h>
 #include <sys/socket.h>
 #ifdef HAVE_SYS_UN_H
@@ -2372,6 +2350,35 @@ esac
 case $host_vendor in
   *sun*) WINE_CHECK_DEFINE([__sun__]) ;;
 esac
+
+dnl *** Check for modules to disable by default
+
+enable_win16=${enable_win16:-i386}
+enable_vcruntime140_1=${enable_vcruntime140_1:-x86_64,arm64ec}
+
+if test -n "$PE_ARCHS"
+then
+    enable_wow64=${enable_wow64:-aarch64,x86_64}
+    enable_wow64win=${enable_wow64win:-aarch64,x86_64}
+    enable_wow64cpu=${enable_wow64cpu:-x86_64}
+else
+    enable_wow64=${enable_wow64:-no}
+    enable_wow64win=${enable_wow64win:-no}
+    enable_wow64cpu=${enable_wow64cpu:-no}
+fi
+
+dnl Explicitly enable some programs for arm64ec
+enable_cmd=${enable_cmd:-yes}
+enable_dllhost=${enable_dllhost:-yes}
+enable_dpnsvr=${enable_dpnsvr:-i386,x86_64,arm64ec}
+enable_dxdiag=${enable_dxdiag:-yes}
+enable_msiexec=${enable_msiexec:-yes}
+enable_netsh=${enable_netsh:-yes}
+enable_regsvr32=${enable_regsvr32:-yes}
+enable_rundll32=${enable_rundll32:-yes}
+
+dnl Disable winetest too if tests are disabled
+enable_winetest=${enable_winetest:-$enable_tests}
 
 dnl **** Generate output files ****
 

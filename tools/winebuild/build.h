@@ -301,8 +301,6 @@ extern const char *get_asm_export_section(void);
 extern const char *get_asm_rodata_section(void);
 extern const char *get_asm_rsrc_section(void);
 extern const char *get_asm_string_section(void);
-extern const char *arm64_page( const char *sym );
-extern const char *arm64_pageoff( const char *sym );
 extern void output_function_header( const char *func, int global );
 extern void output_function_size( const char *name );
 extern void output_gnu_stack_note(void);
@@ -392,8 +390,6 @@ extern struct strarray nm_command;
 extern char *cpu_option;
 extern char *fpu_option;
 extern char *arch_option;
-extern const char *float_abi_option;
-extern int thumb_mode;
 extern int needs_get_pc_thunk;
 
 #endif  /* __WINE_BUILD_H */
