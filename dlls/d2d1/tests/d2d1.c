@@ -20,6 +20,7 @@
 #include <limits.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 #include "d3dcompiler.h"
 #include "d2d1_3.h"
 #include "d2d1effectauthor.h"
@@ -481,6 +482,14 @@ static void set_rect(D2D1_RECT_F *rect, float left, float top, float right, floa
     rect->bottom = bottom;
 }
 
+static void set_vec4(D2D_VECTOR_4F *vec, float x, float y, float z, float w)
+{
+    vec->x = x;
+    vec->y = y;
+    vec->z = z;
+    vec->w = w;
+}
+
 static void set_rounded_rect(D2D1_ROUNDED_RECT *rect, float left, float top, float right, float bottom,
         float radius_x, float radius_y)
 {
@@ -490,6 +499,14 @@ static void set_rounded_rect(D2D1_ROUNDED_RECT *rect, float left, float top, flo
 }
 
 static void set_rect_u(D2D1_RECT_U *rect, UINT32 left, UINT32 top, UINT32 right, UINT32 bottom)
+{
+    rect->left = left;
+    rect->top = top;
+    rect->right = right;
+    rect->bottom = bottom;
+}
+
+static void set_rect_l(D2D1_RECT_L *rect, LONG left, LONG top, LONG right, LONG bottom)
 {
     rect->left = left;
     rect->top = top;
@@ -10845,6 +10862,7 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect)
     UINT i, value_size, str_size;
     WCHAR name[32], buffer[256];
     D2D1_PROPERTY_TYPE type;
+    UINT32 count;
     HRESULT hr;
 
     static const struct system_property_test
@@ -10881,7 +10899,7 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect)
         winetest_push_context("Property %u", i);
 
         name[0] = 0;
-        hr = ID2D1Effect_GetPropertyName(effect, test->index, name, sizeof(name));
+        hr = ID2D1Effect_GetPropertyName(effect, test->index, name, ARRAY_SIZE(name));
         ok_(__FILE__, line)(hr == S_OK, "Failed to get property name, hr %#lx\n", hr);
         if (hr == D2DERR_INVALID_PROPERTY)
         {
@@ -10890,6 +10908,16 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect)
         }
         ok_(__FILE__, line)(!wcscmp(name, test->name), "Got unexpected property name %s, expected %s.\n",
                 debugstr_w(name), debugstr_w(test->name));
+        count = ID2D1Effect_GetPropertyNameLength(effect, test->index);
+        ok_(__FILE__, line)(wcslen(name) == count, "Got unexpected property name length %u.\n", count);
+
+        name[0] = 0;
+        hr = ID2D1Effect_GetPropertyName(effect, test->index, name, count);
+        ok_(__FILE__, line)(hr == D2DERR_INSUFFICIENT_BUFFER, "Failed to get property name, hr %#lx\n", hr);
+
+        name[0] = 0;
+        hr = ID2D1Effect_GetPropertyName(effect, test->index, name, count + 1);
+        ok_(__FILE__, line)(hr == S_OK, "Failed to get property name, hr %#lx\n", hr);
 
         type = ID2D1Effect_GetType(effect, test->index);
         ok_(__FILE__, line)(type == test->type, "Got unexpected property type %#x, expected %#x.\n",
@@ -10906,8 +10934,7 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect)
         {
             hr = ID2D1Effect_GetValue(effect, test->index, D2D1_PROPERTY_TYPE_STRING, (BYTE *)buffer, sizeof(buffer));
             ok_(__FILE__, line)(hr == S_OK, "Failed to get value, hr %#lx.\n", hr);
-            str_size = (wcslen((WCHAR *)buffer) + 1) * sizeof(WCHAR);
-            todo_wine_if(buffer[0] == 0)
+            str_size = (wcslen(buffer) + 1) * sizeof(WCHAR);
             ok_(__FILE__, line)(value_size == str_size, "Got unexpected value size %u, expected %u.\n",
                     value_size, str_size);
         }
@@ -11700,24 +11727,44 @@ static void test_effect_context(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+#define check_zero_buffer(a, b) check_zero_buffer_(a, b, __LINE__)
+static void check_zero_buffer_(const void *buffer, size_t size, unsigned int line)
+{
+    const uint32_t *ptr = buffer;
+    const uint8_t *ptr2 = buffer;
+    size_t i;
+
+    for (i = 0; i < size / sizeof(*ptr); ++i)
+        ok_(__FILE__, line)(!ptr[i], "Expected zero value %#x.\n", ptr[i]);
+    for (i = 0; i < size % sizeof(*ptr); ++i)
+        ok_(__FILE__, line)(!ptr2[size - i - 1], "Expected zero value %#x.\n", ptr2[i]);
+}
+
 static void test_effect_properties(BOOL d3d11)
 {
     UINT32 i, min_inputs, max_inputs, integer, index, size;
     ID2D1EffectContext *effect_context;
     D2D1_BUFFER_PRECISION precision;
-    float vec2[2], vec3[3], vec4[4];
     ID2D1Properties *subproperties;
     D2D1_PROPERTY_TYPE prop_type;
     struct d2d1_test_context ctx;
+    D2D_MATRIX_3X2_F mat3x2;
+    D2D_MATRIX_4X3_F mat4x3;
+    D2D_MATRIX_4X4_F mat4x4;
+    D2D_MATRIX_5X4_F mat5x4;
     ID2D1Factory1 *factory;
     ID2D1Effect *effect;
     UINT32 count, data;
+    D2D_VECTOR_2F vec2;
+    D2D_VECTOR_3F vec3;
+    D2D_VECTOR_4F vec4;
     WCHAR buffer[128];
-    float mat[20];
-    INT32 val;
+    BYTE value[128];
     CLSID clsid;
     BOOL cached;
     HRESULT hr;
+    float *ptr;
+    INT32 val;
 
     static const WCHAR *effect_author = L"The Wine Project";
     static const WCHAR *effect_category = L"Test";
@@ -11868,9 +11915,10 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Vec2Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR2, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR2, (BYTE *)vec2, sizeof(vec2));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR2, (BYTE *)&vec2, sizeof(vec2));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(vec2[0] == 3.0f && vec2[1] == 4.0f, "Unexpected vector (%.8e,%.8e).\n", vec2[0], vec2[1]);
+    ok(vec2.x == 3.0f, "Unexpected value %.8e.\n", vec2.x);
+    ok(vec2.y == 4.0f, "Unexpected value %.8e.\n", vec2.y);
 
     /* Vector3 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Vec3Prop");
@@ -11879,10 +11927,11 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Vec3Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR3, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR3, (BYTE *)vec3, sizeof(vec3));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR3, (BYTE *)&vec3, sizeof(vec3));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(vec3[0] == 5.0f && vec3[1] == 6.0f && vec3[2] == 7.0f, "Unexpected vector (%.8e,%.8e,%.8e).\n",
-            vec3[0], vec3[1], vec3[2]);
+    ok(vec3.x == 5.0f, "Unexpected value %.8e.\n", vec3.x);
+    ok(vec3.y == 6.0f, "Unexpected value %.8e.\n", vec3.y);
+    ok(vec3.z == 7.0f, "Unexpected value %.8e.\n", vec3.z);
 
     /* Vector4 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Vec4Prop");
@@ -11891,10 +11940,12 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Vec4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR4, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR4, (BYTE *)vec4, sizeof(vec4));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR4, (BYTE *)&vec4, sizeof(vec4));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(vec4[0] == 8.0f && vec4[1] == 9.0f && vec4[2] == 10.0f && vec4[3] == 11.0f,
-            "Unexpected vector (%.8e,%.8e,%.8e,%.8e).\n", vec4[0], vec4[1], vec4[2], vec4[3]);
+    ok(vec4.x == 8.0f, "Unexpected value %.8e.\n", vec4.x);
+    ok(vec4.y == 9.0f, "Unexpected value %.8e.\n", vec4.y);
+    ok(vec4.z == 10.0f, "Unexpected value %.8e.\n", vec4.z);
+    ok(vec4.w == 11.0f, "Unexpected value %.8e.\n", vec4.w);
 
     /* Matrix3x2 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Mat3x2Prop");
@@ -11903,11 +11954,10 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Mat3x2Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_3X2, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_3X2, (BYTE *)mat, 6 * sizeof(float));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_3X2, (BYTE *)&mat3x2, sizeof(mat3x2));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(mat[0] == 1.0f && mat[1] == 2.0f && mat[2] == 3.0f && mat[3] == 4.0f && mat[4] == 5.0f && mat[5] == 6.0f,
-            "Unexpected matrix (%.8e,%.8e,%.8e,%.8e,%.8e,%.8e).\n",
-            mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]);
+    for (i = 0, ptr = (float *)&mat3x2; i < sizeof(mat3x2) / sizeof(*ptr); ++i, ++ptr)
+        ok(*ptr == 1.0f + i, "Unexpected value %.8e.\n", *ptr);
 
     /* Matrix4x3 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Mat4x3Prop");
@@ -11916,10 +11966,10 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Mat4x3Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_4X3, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X3, (BYTE *)mat, 12 * sizeof(float));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X3, (BYTE *)&mat4x3, sizeof(mat4x3));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    for (i = 0; i < 12; ++i)
-        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+    for (i = 0, ptr = (float *)&mat4x3; i < sizeof(mat4x3) / sizeof(*ptr); ++i, ++ptr)
+        ok(*ptr == 1.0f + i, "Unexpected value %.8e.\n", *ptr);
 
     /* Matrix4x4 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Mat4x4Prop");
@@ -11928,10 +11978,10 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Mat4x4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_4X4, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X4, (BYTE *)mat, 16 * sizeof(float));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X4, (BYTE *)&mat4x4, sizeof(mat4x4));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    for (i = 0; i < 16; ++i)
-        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+    for (i = 0, ptr = (float *)&mat4x4; i < sizeof(mat4x4) / sizeof(*ptr); ++i, ++ptr)
+        ok(*ptr == 1.0f + i, "Unexpected value %.8e.\n", *ptr);
 
     /* Matrix5x4 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Mat5x4Prop");
@@ -11940,10 +11990,10 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"Mat5x4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
     prop_type = ID2D1Effect_GetType(effect, index);
     ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_5X4, "Unexpected type %u.\n", prop_type);
-    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_5X4, (BYTE *)mat, 20 * sizeof(float));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_5X4, (BYTE *)&mat5x4, sizeof(mat5x4));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    for (i = 0; i < 20; ++i)
-        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+    for (i = 0, ptr = (float *)&mat5x4; i < sizeof(mat5x4) / sizeof(*ptr); ++i, ++ptr)
+        ok(*ptr == 1.0f + i, "Unexpected value %.8e.\n", *ptr);
 
     ID2D1Effect_Release(effect);
 
@@ -12070,55 +12120,84 @@ static void test_effect_properties(BOOL d3d11)
     index = ID2D1Effect_GetPropertyIndex(effect, L"Integer");
     ok(index == 1, "Got unexpected index %u.\n", index);
 
-    effect_context = (ID2D1EffectContext *)0xdeadbeef;
-    hr = ID2D1Effect_GetValueByName(effect,
-            L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context) - 1);
+    /* On type mismatch output buffer is zeroed. */
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValueByName(effect, L"Context", D2D1_PROPERTY_TYPE_UINT32, value, sizeof(void *));
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
-    hr = ID2D1Effect_GetValueByName(effect,
-            L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context) + 1);
+    check_zero_buffer(value, sizeof(void *));
+
+    /* On size mismatch output buffer is zeroed. */
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValueByName(effect, L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN, value, sizeof(void *) - 1);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    check_zero_buffer(value, sizeof(void *) - 1);
+
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValueByName(effect, L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN, value, sizeof(void *) + 1);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    check_zero_buffer(value, sizeof(void *) + 1);
+
+    effect_context = NULL;
     hr = ID2D1Effect_GetValueByName(effect,
             L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(effect_context != NULL && effect_context != (ID2D1EffectContext *)0xdeadbeef,
-       "Got unexpected effect context %p.\n", effect_context);
+    ok(!!effect_context, "Got unexpected effect context %p.\n", effect_context);
 
-    effect_context = (ID2D1EffectContext *)0xdeadbeef;
-    hr = ID2D1Effect_GetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context) - 1);
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, value, sizeof(void *) - 1);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
-    hr = ID2D1Effect_GetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context) + 1);
+    check_zero_buffer(value, sizeof(void *) - 1);
+
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, value, sizeof(void *) + 1);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    check_zero_buffer(value, sizeof(void *) + 1);
+
+    effect_context = NULL;
     hr = ID2D1Effect_GetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(effect_context != NULL && effect_context != (ID2D1EffectContext *)0xdeadbeef,
-       "Got unexpected effect context %p.\n", effect_context);
+    ok(!!effect_context, "Got unexpected effect context %p.\n", effect_context);
 
     hr = ID2D1Effect_SetValue(effect, 0, D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context));
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
 
-    integer = 0xdeadbeef;
-    hr = ID2D1Effect_GetValueByName(effect, L"Integer", D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) - 1);
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValueByName(effect, L"Integer", D2D1_PROPERTY_TYPE_UINT32, value, 3);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
-    hr = ID2D1Effect_GetValueByName(effect, L"Integer", D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) + 1);
+    check_zero_buffer(value, 3);
+
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValueByName(effect, L"Integer", D2D1_PROPERTY_TYPE_UINT32, value, 5);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    check_zero_buffer(value, 5);
+
+    integer = 0;
     hr = ID2D1Effect_GetValueByName(effect, L"Integer", D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(integer == 10, "Got unexpected integer %u.", integer);
 
-    integer = 0xdeadbeef;
-    hr = ID2D1Effect_GetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) - 1);
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, value, 3);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
-    hr = ID2D1Effect_GetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) + 1);
+    check_zero_buffer(value, 3);
+
+    memset(value, 0xcc, sizeof(value));
+    hr = ID2D1Effect_GetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, value, 5);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    check_zero_buffer(value, 5);
+
+    integer = 0;
     hr = ID2D1Effect_GetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(integer == 10, "Got unexpected integer %u.", integer);
 
+    memset(value, 0, sizeof(value));
+    hr = ID2D1Effect_SetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, value, 3);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1Effect_SetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, value, 5);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
     integer = 20;
-    hr = ID2D1Effect_SetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) - 1);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    hr = ID2D1Effect_SetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer) + 1);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID2D1Effect_SetValue(effect, 1, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     integer = 0xdeadbeef;
@@ -12867,6 +12946,9 @@ static void test_offset_transform(BOOL d3d11)
     offset = ID2D1OffsetTransform_GetOffset(transform);
     ok(offset.x == 1 && offset.y == 2, "Got unexpected offset {%ld, %ld}.\n", offset.x, offset.y);
 
+    check_interface(transform, &IID_ID2D1OffsetTransform, TRUE);
+    check_interface(transform, &IID_ID2D1TransformNode, TRUE);
+
     /* Input count */
     input_count = ID2D1OffsetTransform_GetInputCount(transform);
     ok(input_count == 1, "Got unexpected input count %u.\n", input_count);
@@ -12966,8 +13048,13 @@ static void test_blend_transform(BOOL d3d11)
     hr = ID2D1EffectContext_CreateBlendTransform(effect_context, 1, &expected, &transform);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID2D1BlendTransform_Release(transform);
+
     hr = ID2D1EffectContext_CreateBlendTransform(effect_context, 4, &expected, &transform);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    check_interface(transform, &IID_ID2D1BlendTransform, TRUE);
+    check_interface(transform, &IID_ID2D1ConcreteTransform, TRUE);
+    check_interface(transform, &IID_ID2D1TransformNode, TRUE);
 
     /* Get description */
     ID2D1BlendTransform_GetDescription(transform, &blend_desc);
@@ -13049,9 +13136,12 @@ static void test_border_transform(BOOL d3d11)
 
     /* Create transform with invalid extend mode */
     hr = ID2D1EffectContext_CreateBorderTransform(effect_context, 0xdeadbeef, 0xdeadbeef, &transform);
-    todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto done;
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    check_interface(transform, &IID_ID2D1BorderTransform, TRUE);
+    check_interface(transform, &IID_ID2D1ConcreteTransform, TRUE);
+    check_interface(transform, &IID_ID2D1TransformNode, TRUE);
+
     mode = ID2D1BorderTransform_GetExtendModeX(transform);
     ok(mode == 0xdeadbeef, "Got unexpected extend mode %u.\n", mode);
     mode = ID2D1BorderTransform_GetExtendModeY(transform);
@@ -13074,10 +13164,13 @@ static void test_border_transform(BOOL d3d11)
 
     /* Set output buffer */
     hr = ID2D1BorderTransform_SetOutputBuffer(transform, 0xdeadbeef, D2D1_CHANNEL_DEPTH_DEFAULT);
+    todo_wine
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
     hr = ID2D1BorderTransform_SetOutputBuffer(transform, D2D1_BUFFER_PRECISION_UNKNOWN, 0xdeadbeef);
+    todo_wine
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
     hr = ID2D1BorderTransform_SetOutputBuffer(transform, D2D1_BUFFER_PRECISION_UNKNOWN, D2D1_CHANNEL_DEPTH_DEFAULT);
+    todo_wine
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     /* Set extend mode */
@@ -13096,9 +13189,74 @@ static void test_border_transform(BOOL d3d11)
     mode = ID2D1BorderTransform_GetExtendModeY(transform);
     ok(mode == D2D1_EXTEND_MODE_CLAMP, "Got unexpected extend mode %u.\n", mode);
 
-done:
-    if (transform)
-        ID2D1BorderTransform_Release(transform);
+    ID2D1BorderTransform_Release(transform);
+    ID2D1Effect_Release(effect);
+    hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    release_test_context(&ctx);
+}
+
+static void test_bounds_adjustment_transform(BOOL d3d11)
+{
+    ID2D1BoundsAdjustmentTransform *transform = NULL;
+    ID2D1EffectContext *effect_context;
+    D2D1_PROPERTY_BINDING binding;
+    struct d2d1_test_context ctx;
+    ID2D1Factory1 *factory;
+    ID2D1Effect *effect;
+    UINT input_count;
+    D2D1_RECT_L rect;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    factory = ctx.factory1;
+    if (!factory)
+    {
+        win_skip("ID2D1Factory1 is not supported.\n");
+        release_test_context(&ctx);
+        return;
+    }
+
+    binding.propertyName = L"Context";
+    binding.setFunction = NULL;
+    binding.getFunction = effect_impl_get_context;
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect,
+            effect_xml_b, &binding, 1, effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext_CreateEffect(ctx.context, &CLSID_TestEffect, &effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Effect_GetValueByName(effect, L"Context",
+            D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_rect_l(&rect, -1, 0, 25, -50);
+    hr = ID2D1EffectContext_CreateBoundsAdjustmentTransform(effect_context, &rect, &transform);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    check_interface(transform, &IID_ID2D1BoundsAdjustmentTransform, TRUE);
+    check_interface(transform, &IID_ID2D1TransformNode, TRUE);
+
+    memset(&rect, 0, sizeof(rect));
+    ID2D1BoundsAdjustmentTransform_GetOutputBounds(transform, &rect);
+    ok(rect.left == -1 && rect.top == 0 && rect.right == 25 && rect.bottom == -50,
+            "Unexpected rectangle.\n");
+
+    set_rect_l(&rect, -50, 25, 0, -1);
+    ID2D1BoundsAdjustmentTransform_SetOutputBounds(transform, &rect);
+    memset(&rect, 0, sizeof(rect));
+    ID2D1BoundsAdjustmentTransform_GetOutputBounds(transform, &rect);
+    ok(rect.left == -50 && rect.top == 25 && rect.right == 0 && rect.bottom == -1,
+            "Unexpected rectangle.\n");
+
+    /* Input count */
+    input_count = ID2D1BoundsAdjustmentTransform_GetInputCount(transform);
+    ok(input_count == 1, "Got unexpected input count %u.\n", input_count);
+
+    ID2D1BoundsAdjustmentTransform_Release(transform);
     ID2D1Effect_Release(effect);
     hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
@@ -14557,6 +14715,81 @@ static void test_effect_custom_pixel_shader(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+static void test_get_effect_properties(BOOL d3d11)
+{
+    ID2D1Properties *properties, *properties2;
+    struct d2d1_test_context ctx;
+    D2D_VECTOR_4F rect, rect2;
+    D2D1_PROPERTY_TYPE type;
+    ID2D1Factory1 *factory;
+    UINT32 count, index;
+    WCHAR buffW[64];
+    ULONG refcount;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    factory = ctx.factory1;
+    if (!factory)
+    {
+        release_test_context(&ctx);
+        return;
+    }
+
+    hr = ID2D1Factory1_GetEffectProperties(factory, &GUID_NULL, &properties);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Factory1_GetEffectProperties(factory, &CLSID_D2D1Crop, &properties);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    refcount = get_refcount(properties);
+    ok(refcount == 2, "Unexpected refcount %lu.\n", refcount);
+
+    hr = ID2D1Factory1_GetEffectProperties(factory, &CLSID_D2D1Crop, &properties2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(properties == properties2, "Unexpected instance.\n");
+    refcount = get_refcount(properties);
+    ok(refcount == 3, "Unexpected refcount %lu.\n", refcount);
+    ID2D1Properties_Release(properties2);
+
+    count = ID2D1Properties_GetPropertyCount(properties);
+    todo_wine
+    ok(count == 2, "Unexpected property count %u.\n", count);
+
+    hr = ID2D1Properties_GetPropertyName(properties, 0, buffW, ARRAY_SIZE(buffW));
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffW, L"Rect"), "Unexpected name %s.\n", debugstr_w(buffW));
+
+    count = ID2D1Properties_GetPropertyNameLength(properties, 0);
+    ok(count == 4, "Unexpected name length %u.\n", count);
+
+    type = ID2D1Properties_GetType(properties, 0);
+    ok(type == D2D1_PROPERTY_TYPE_VECTOR4, "Unexpected property type %u.\n", type);
+
+    index = ID2D1Properties_GetPropertyIndex(properties, L"prop");
+    ok(index == ~0u, "Unexpected index %u.\n", index);
+
+    set_vec4(&rect, 0.0f, 2.0f, 10.0f, 20.0f);
+    hr = ID2D1Properties_SetValue(properties, D2D1_CROP_PROP_RECT, D2D1_PROPERTY_TYPE_VECTOR4,
+            (const BYTE *)&rect, sizeof(rect));
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Properties_SetValue(properties, 1000, D2D1_PROPERTY_TYPE_VECTOR4,
+            (const BYTE *)&rect, sizeof(rect));
+    ok(hr == D2DERR_INVALID_PROPERTY, "Unexpected hr %#lx.\n", hr);
+
+    set_vec4(&rect2, 1.0f, 2.0f, 3.0f, 4.0f);
+    set_vec4(&rect, 0.0f, .0f, 0.0f, 0.0f);
+    hr = ID2D1Properties_GetValue(properties, D2D1_CROP_PROP_RECT, D2D1_PROPERTY_TYPE_VECTOR4,
+            (BYTE *)&rect2, sizeof(rect2));
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!memcmp(&rect, &rect2, sizeof(rect)), "Unexpected value.\n");
+
+    ID2D1Properties_Release(properties);
+
+    release_test_context(&ctx);
+}
+
 START_TEST(d2d1)
 {
     HMODULE d2d1_dll = GetModuleHandleA("d2d1.dll");
@@ -14642,11 +14875,13 @@ START_TEST(d2d1)
     queue_test(test_offset_transform);
     queue_test(test_blend_transform);
     queue_test(test_border_transform);
+    queue_test(test_bounds_adjustment_transform);
     queue_d3d10_test(test_stroke_contains_point);
     queue_test(test_image_bounds);
     queue_test(test_bitmap_map);
     queue_test(test_bitmap_create);
     queue_test(test_effect_custom_pixel_shader);
+    queue_test(test_get_effect_properties);
 
     run_queued_tests();
 }

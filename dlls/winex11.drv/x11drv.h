@@ -604,7 +604,6 @@ struct x11drv_win_data
     Display    *display;        /* display connection for the thread owning the window */
     XVisualInfo vis;            /* X visual used by this window */
     Colormap    whole_colormap; /* colormap if non-default visual */
-    Colormap    client_colormap; /* colormap for the client window */
     HWND        hwnd;           /* hwnd that this private data belongs to */
     Window      whole_window;   /* X window for the complete window */
     Window      client_window;  /* X window for the client area */
@@ -641,7 +640,7 @@ extern Window get_dummy_parent(void);
 extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
 extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
 extern void destroy_gl_drawable( HWND hwnd );
-extern void wine_vk_surface_destroy( HWND hwnd );
+extern void destroy_vk_surface( HWND hwnd );
 extern void vulkan_thread_detach(void);
 
 extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
@@ -650,7 +649,8 @@ extern void update_user_time( Time time );
 extern void read_net_wm_states( Display *display, struct x11drv_win_data *data );
 extern void update_net_wm_states( struct x11drv_win_data *data );
 extern void make_window_embedded( struct x11drv_win_data *data );
-extern Window create_client_window( HWND hwnd, const XVisualInfo *visual );
+extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
+extern void destroy_client_window( HWND hwnd, Window client_window );
 extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
 extern void change_systray_owner( Display *display, Window systray_window );
 extern HWND create_foreign_window( Display *display, Window window );
