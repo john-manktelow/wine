@@ -74,10 +74,9 @@ typedef struct VkXlibSurfaceCreateInfoKHR
 } VkXlibSurfaceCreateInfoKHR;
 
 static VkResult (*pvkCreateXlibSurfaceKHR)(VkInstance, const VkXlibSurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
-static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
 static VkBool32 (*pvkGetPhysicalDeviceXlibPresentationSupportKHR)(VkPhysicalDevice, uint32_t, Display *, VisualID);
 
-static const struct vulkan_funcs vulkan_funcs;
+static const struct vulkan_driver_funcs x11drv_vulkan_driver_funcs;
 
 static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
@@ -132,21 +131,16 @@ void vulkan_thread_detach(void)
     pthread_mutex_unlock(&vulkan_mutex);
 }
 
-static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
-        const VkWin32SurfaceCreateInfoKHR *create_info,
-        const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface)
+static VkResult X11DRV_vulkan_surface_create( HWND hwnd, VkInstance instance, VkSurfaceKHR *surface )
 {
     VkResult res;
     VkXlibSurfaceCreateInfoKHR create_info_host;
     struct wine_vk_surface *x11_surface;
 
-    TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
+    TRACE( "%p %p %p\n", hwnd, instance, surface );
 
     /* TODO: support child window rendering. */
-    if (NtUserGetAncestor( create_info->hwnd, GA_PARENT ) != NtUserGetDesktopWindow())
+    if (NtUserGetAncestor( hwnd, GA_PARENT ) != NtUserGetDesktopWindow())
     {
         FIXME("Application requires child window rendering, which is not implemented yet!\n");
         return VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -157,13 +151,13 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     x11_surface->ref = 1;
-    x11_surface->hwnd = create_info->hwnd;
-    x11_surface->window = create_client_window( create_info->hwnd, &default_visual, default_colormap );
+    x11_surface->hwnd = hwnd;
+    x11_surface->window = create_client_window( hwnd, &default_visual, default_colormap );
     x11_surface->hwnd_thread_id = NtUserGetWindowThread( x11_surface->hwnd, NULL );
 
     if (!x11_surface->window)
     {
-        ERR("Failed to allocate client window for hwnd=%p\n", create_info->hwnd);
+        ERR( "Failed to allocate client window for hwnd=%p\n", hwnd );
 
         /* VK_KHR_win32_surface only allows out of host and device memory as errors. */
         free(x11_surface);
@@ -195,18 +189,17 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
     return VK_SUCCESS;
 }
 
-static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface,
-        const VkAllocationCallbacks *allocator)
+static void X11DRV_vulkan_surface_destroy( HWND hwnd, VkSurfaceKHR surface )
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
 
-    TRACE("%p 0x%s %p\n", instance, wine_dbgstr_longlong(surface), allocator);
+    TRACE( "%p 0x%s\n", hwnd, wine_dbgstr_longlong(surface) );
 
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    pvkDestroySurfaceKHR( instance, x11_surface->host_surface, NULL /* allocator */ );
     wine_vk_surface_release(x11_surface);
+}
+
+static void X11DRV_vulkan_surface_presented(HWND hwnd, VkResult result)
+{
 }
 
 static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
@@ -232,25 +225,18 @@ static VkSurfaceKHR X11DRV_wine_get_host_surface( VkSurfaceKHR surface )
     return x11_surface->host_surface;
 }
 
-static void X11DRV_vulkan_surface_presented(HWND hwnd, VkResult result)
+static const struct vulkan_driver_funcs x11drv_vulkan_driver_funcs =
 {
-}
+    .p_vulkan_surface_create = X11DRV_vulkan_surface_create,
+    .p_vulkan_surface_destroy = X11DRV_vulkan_surface_destroy,
+    .p_vulkan_surface_presented = X11DRV_vulkan_surface_presented,
 
-static const struct vulkan_funcs vulkan_funcs =
-{
-    X11DRV_vkCreateWin32SurfaceKHR,
-    X11DRV_vkDestroySurfaceKHR,
-    NULL,
-    NULL,
-    X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
-    NULL,
-
-    X11DRV_get_host_surface_extension,
-    X11DRV_wine_get_host_surface,
-    X11DRV_vulkan_surface_presented,
+    .p_vkGetPhysicalDeviceWin32PresentationSupportKHR = X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
+    .p_get_host_surface_extension = X11DRV_get_host_surface_extension,
+    .p_wine_get_host_surface = X11DRV_wine_get_host_surface,
 };
 
-UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
+UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs )
 {
     if (version != WINE_VULKAN_DRIVER_VERSION)
     {
@@ -262,17 +248,16 @@ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *
 
 #define LOAD_FUNCPTR( f ) if (!(p##f = dlsym( vulkan_handle, #f ))) return STATUS_PROCEDURE_NOT_FOUND;
     LOAD_FUNCPTR( vkCreateXlibSurfaceKHR );
-    LOAD_FUNCPTR( vkDestroySurfaceKHR );
     LOAD_FUNCPTR( vkGetPhysicalDeviceXlibPresentationSupportKHR );
 #undef LOAD_FUNCPTR
 
-    *driver_funcs = vulkan_funcs;
+    *driver_funcs = &x11drv_vulkan_driver_funcs;
     return STATUS_SUCCESS;
 }
 
 #else /* No vulkan */
 
-UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
+UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs )
 {
     ERR( "Wine was built without Vulkan support.\n" );
     return STATUS_NOT_IMPLEMENTED;
